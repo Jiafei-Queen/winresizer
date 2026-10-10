@@ -4,11 +4,32 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/wails.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f6fa" />
+    <script>
+      (() => {
+        let theme = "light";
+        try {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        } catch {
+          // Keep the light fallback if system preferences are unavailable.
+        }
+        try {
+          const savedTheme = localStorage.getItem("winresizer-theme");
+          if (savedTheme === "dark" || savedTheme === "light") theme = savedTheme;
+        } catch {
+          // Keep the system preference if saved settings are unavailable.
+        }
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute(
+          "content",
+          theme === "dark" ? "#11161e" : "#f4f6fa",
+        );
+      })();
+    </script>
     <link rel="stylesheet" href="/style.css" />
-    <title>Wails + Svelte + TS</title>
+    <title>WinResizer</title>
   </head>
   <body>
-    <div class="bg" aria-hidden="true"></div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
