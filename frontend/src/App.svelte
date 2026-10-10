@@ -4,7 +4,7 @@
 
   interface Size { w: number; h: number; }
   interface AppPreset { id: string; appName: string; sizes: Size[]; lastIndex: number; }
-  interface Focused { app: string; title: string; w: number; h: number; monitor: number; }
+  interface TargetWindow { id: string; app: string; title: string; w: number; h: number; monitor: number; self?: boolean; }
   type Theme = 'light' | 'dark';
 
   const themeStorageKey = 'winresizer-theme';
@@ -13,7 +13,10 @@
   let newHotkey: string = $state('');
   let axGranted: boolean = $state(false);
   let apps: AppPreset[] = $state([]);
-  let focused: Focused | null = $state(null);
+  // Tracked target: the last window focused outside this app. Window
+  // picking itself lives in the overlay (OpenOverlay); the console only
+  // shows the auto target and cycles it.
+  let target: TargetWindow | null = $state(null);
   let message: string = $state('');
   let theme: Theme = $state(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   let toastEl: HTMLElement | undefined = $state();
@@ -62,20 +65,20 @@
     }
   }
 
-  async function refreshFocused(): Promise<void> {
+  async function refreshTarget(): Promise<void> {
     try {
-      focused = await ResizerService.FocusedInfo() as Focused;
+      target = await ResizerService.GetTarget() as TargetWindow;
     } catch (e) {
-      focused = null;
+      target = null;
       showMessage(errText(e));
     }
   }
 
-  async function doRecord(): Promise<void> {
+  // Opens the overlay picker: the console hides, the user clicks a
+  // window on screen, confirms, and control returns here.
+  async function doPick(): Promise<void> {
     try {
-      showMessage(await ResizerService.RecordFocused());
-      await refresh();
-      await refreshFocused();
+      await ResizerService.OpenOverlay();
     } catch (e) {
       showMessage(errText(e));
     }
@@ -83,8 +86,9 @@
 
   async function doCycle(): Promise<void> {
     try {
-      showMessage(await ResizerService.CycleFocused());
+      showMessage(await ResizerService.CycleTarget());
       await refresh();
+      await refreshTarget();
     } catch (e) {
       showMessage(errText(e));
     }
@@ -132,7 +136,7 @@
     }
 
     await refresh();
-    await refreshFocused();
+    await refreshTarget();
   });
 </script>
 
@@ -200,17 +204,17 @@
   <section class="card focus-card" aria-labelledby="active-window-title">
     <div class="card-heading focus-heading">
       <div>
-        <p class="eyebrow">ACTIVE WINDOW</p>
-        <h2 id="active-window-title">Current size</h2>
+        <p class="eyebrow">TARGET WINDOW</p>
+        <h2 id="active-window-title">Target window</h2>
       </div>
-      <button class="icon-btn" onclick={refreshFocused} aria-label="Refresh focused window" title="Refresh window info">
+      <button class="icon-btn" onclick={refreshTarget} aria-label="Refresh target window" title="Refresh target window">
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M16 8a6.1 6.1 0 0 0-10.5-2L4 7.5M4 4v3.5h3.5M4 12a6.1 6.1 0 0 0 10.5 2L16 12.5M16 16v-3.5h-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
     </div>
 
-    {#if focused}
+    {#if target}
       <div class="window-summary">
         <div class="window-overview">
           <div class="window-glyph" aria-hidden="true">
@@ -222,16 +226,17 @@
             </svg>
           </div>
           <div class="window-copy">
-            <div class="window-app" title={focused.title || focused.app}>{focused.app}</div>
-            {#if focused.title && focused.title !== focused.app}
-              <p class="window-title" title={focused.title}>{focused.title}</p>
+            <div class="window-app" title={target.title || target.app}>{target.app}</div>
+            {#if target.title && target.title !== target.app}
+              <p class="window-title" title={target.title}>{target.title}</p>
             {/if}
           </div>
+          <span class="target-badge" title="Last window focused outside this app">Auto</span>
         </div>
-        <p class="dimensions" aria-label={`${focused.w} by ${focused.h} pixels`}>
-          <span>{focused.w}</span>
+        <p class="dimensions" aria-label={`${target.w} by ${target.h} pixels`}>
+          <span>{target.w}</span>
           <span class="dimension-separator" aria-hidden="true">×</span>
-          <span>{focused.h}</span>
+          <span>{target.h}</span>
           <small>px</small>
         </p>
       </div>
@@ -246,18 +251,18 @@
           </svg>
         </div>
         <div>
-          <strong>No active window found</strong>
-          <p>Focus a window, then refresh to see its size.</p>
+          <strong>No target window yet</strong>
+          <p>Focus another app's window first, then refresh.</p>
         </div>
       </div>
     {/if}
 
     <div class="row action-row">
-      <button class="btn primary" onclick={doRecord}>
+      <button class="btn primary" onclick={doPick}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
         </svg>
-        Record this size
+        Pick window…
       </button>
       <button class="btn secondary" onclick={doCycle}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -566,7 +571,21 @@
   }
 
   .window-glyph svg { width: 21px; height: 21px; }
-  .window-copy { min-width: 0; }
+  .window-copy { min-width: 0; flex: 1; }
+
+  .target-badge {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding: 4px 8px;
+    color: var(--text-tertiary);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    white-space: nowrap;
+  }
 
   .window-app {
     overflow: hidden;

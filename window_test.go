@@ -9,7 +9,7 @@ import (
 func TestNormalizeAppID(t *testing.T) {
 	cases := map[string]string{
 		"Google Chrome": "google chrome",
-		"  Code  ":       "code",
+		"  Code  ":      "code",
 		"":              "",
 	}
 	for in, want := range cases {
@@ -33,11 +33,47 @@ func TestMatchForPrefersTitle(t *testing.T) {
 }
 
 func TestToWindowInfo(t *testing.T) {
-	w := windowctl.Window{App: "Firefox", Title: "Inbox", Monitor: 2}
+	w := windowctl.Window{ID: "42", App: "Firefox", Title: "Inbox", Monitor: 2}
 	w.Bounds.W, w.Bounds.H = 1200, 800
 	info := toWindowInfo(w)
-	if info.App != "Firefox" || info.W != 1200 || info.H != 800 || info.Monitor != 2 {
+	if info.ID != "42" || info.App != "Firefox" || info.W != 1200 || info.H != 800 || info.Monitor != 2 {
 		t.Fatalf("toWindowInfo = %+v", info)
+	}
+}
+
+func TestTrackerIgnoresSelf(t *testing.T) {
+	const self = 100
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return nil, nil }, self, targetPollInterval)
+	defer tr.stopLoop()
+
+	ext := windowctl.Window{ID: "1", App: "Safari", PID: 200, Focused: true}
+	tr.update([]windowctl.Window{ext})
+	if got, ok := tr.get(); !ok || got.ID != "1" {
+		t.Fatalf("get = %+v,%v, want ID=1,true", got, ok)
+	}
+
+	// Only our own window focused: target must stay on the external one.
+	own := windowctl.Window{ID: "2", App: "WinResizer", PID: self, Focused: true}
+	tr.update([]windowctl.Window{own})
+	if got, ok := tr.get(); !ok || got.ID != "1" {
+		t.Fatalf("get after self-focus = %+v,%v, want ID=1,true", got, ok)
+	}
+
+	// A newer external focus replaces the target.
+	ext2 := windowctl.Window{ID: "3", App: "Code", PID: 300, Focused: true}
+	tr.update([]windowctl.Window{own, ext2})
+	if got, ok := tr.get(); !ok || got.ID != "3" {
+		t.Fatalf("get after switch = %+v,%v, want ID=3,true", got, ok)
+	}
+}
+
+func TestTrackerEmptyInitially(t *testing.T) {
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return nil, nil }, 100, targetPollInterval)
+	defer tr.stopLoop()
+	// No focused external window seen: no target.
+	tr.update([]windowctl.Window{{ID: "9", App: "X", PID: 200}})
+	if _, ok := tr.get(); ok {
+		t.Fatal("get should report ok=false before any external focus")
 	}
 }
 
@@ -50,6 +86,7 @@ func TestServiceRequiresConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewResizerService: %v", err)
 	}
+	defer svc.tracker.stopLoop()
 	if !firstRun {
 		t.Fatal("fresh config should report firstRun=true")
 	}

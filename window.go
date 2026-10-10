@@ -2,19 +2,30 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/muthuishere/windowctl"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+// targetPollInterval is how often the tracker refreshes the "last external
+// focused window" snapshot.
+const targetPollInterval = time.Second
+
 // WindowInfo is the bindings-friendly view of a window shown in the UI.
+// ID is the OS window handle (macOS: CGWindowID) and identifies one window
+// instance; Self marks our own settings window so the UI can grey it out.
 type WindowInfo struct {
+	ID      string `json:"id"`
 	App     string `json:"app"`
 	Title   string `json:"title"`
 	W       int    `json:"w"`
 	H       int    `json:"h"`
 	Monitor int    `json:"monitor"`
+	Self    bool   `json:"self"`
 }
 
 // normalizeAppID maps the OS-reported app name to a stable lookup key.
@@ -58,14 +69,109 @@ func matchFor(w windowctl.Window) windowctl.Match {
 }
 
 func toWindowInfo(w windowctl.Window) WindowInfo {
-	return WindowInfo{App: w.App, Title: w.Title, W: w.Bounds.W, H: w.Bounds.H, Monitor: w.Monitor}
+	return WindowInfo{ID: w.ID, App: w.App, Title: w.Title, W: w.Bounds.W, H: w.Bounds.H, Monitor: w.Monitor}
+}
+
+// listWindowsFunc is injectable for tests.
+type listWindowsFunc func() ([]windowctl.Window, error)
+
+func liveListWindows() ([]windowctl.Window, error) {
+	return windowctl.ListWindows(windowctl.Filter{})
+}
+
+// targetTracker remembers the most recently focused window that does NOT
+// belong to our own process. Rationale: clicking our settings UI steals
+// focus, so "currently focused window" is useless for Record/Cycle from
+// the UI — the tracker lets the UI act on the window the user was in
+// just before they clicked us.
+type targetTracker struct {
+	mu     sync.Mutex
+	self   int
+	list   listWindowsFunc
+	target *windowctl.Window
+	stop   chan struct{}
+	done   chan struct{}
+}
+
+func newTargetTracker(list listWindowsFunc, selfPID int, interval time.Duration) *targetTracker {
+	t := &targetTracker{self: selfPID, list: list, stop: make(chan struct{}), done: make(chan struct{})}
+	go t.loop(interval)
+	return t
+}
+
+func (t *targetTracker) loop(interval time.Duration) {
+	defer close(t.done)
+	t.poll()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.stop:
+			return
+		case <-ticker.C:
+			t.poll()
+		}
+	}
+}
+
+func (t *targetTracker) poll() {
+	windows, err := t.list()
+	if err != nil {
+		return
+	}
+	t.update(windows)
+}
+
+// update records the focused external window, if any. When nothing
+// external is focused (e.g. our own settings window has focus, or the
+// desktop does), the previous target is kept.
+func (t *targetTracker) update(windows []windowctl.Window) {
+	for _, w := range windows {
+		if w.Focused && w.PID != t.self {
+			snap := w
+			t.mu.Lock()
+			t.target = &snap
+			t.mu.Unlock()
+			return
+		}
+	}
+}
+
+// get returns the tracked target snapshot, or ok=false when nothing has
+// been tracked yet.
+func (t *targetTracker) get() (w windowctl.Window, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.target == nil {
+		return windowctl.Window{}, false
+	}
+	return *t.target, true
+}
+
+// stopLoop terminates the background goroutine (used in tests).
+func (t *targetTracker) stopLoop() {
+	close(t.stop)
+	<-t.done
 }
 
 // ResizerService is the Wails-bound backend. All methods are safe for
 // concurrent use: global-shortcut callbacks fire on their own goroutine.
+// app/console/overlay are wired by main after startup (same package, so
+// they stay unexported and out of the JS bindings).
 type ResizerService struct {
-	mu  sync.Mutex
-	cfg *Config
+	mu      sync.Mutex
+	cfg     *Config
+	tracker *targetTracker
+
+	app               *application.App
+	console           *application.WebviewWindow
+	overlay           *application.WebviewWindow
+	consoleWasVisible bool
+
+	// ovAnchor tracks the overlay's real on-screen position so the
+	// WindowDidMove hook can snap it back if dragged. Atomic (see
+	// overlayAnchor): touched from the main thread without s.mu.
+	ovAnchor overlayAnchor
 }
 
 // NewResizerService loads (or creates) the config. firstRun is true when
@@ -75,7 +181,9 @@ func NewResizerService() (svc *ResizerService, firstRun bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return &ResizerService{cfg: cfg}, firstRun, nil
+	svc = &ResizerService{cfg: cfg}
+	svc.tracker = newTargetTracker(liveListWindows, os.Getpid(), targetPollInterval)
+	return svc, firstRun, nil
 }
 
 // GetConfig returns a snapshot of the current config for the settings UI.
@@ -109,21 +217,32 @@ func (s *ResizerService) FocusedInfo() (WindowInfo, error) {
 	return toWindowInfo(w), nil
 }
 
-// RecordFocused stores the focused window's current size in its app
-// preset. This is the "teach" half of the workflow: focus a window,
-// size it by hand, then record it.
-func (s *ResizerService) RecordFocused() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	w, err := focusedWindow()
-	if err != nil {
-		return "", err
+// findWindowByID re-lists windows and returns the one with the given OS
+// window handle. A fresh listing is deliberate: the tracker snapshot may
+// hold stale bounds, and the window may have closed since.
+func findWindowByID(id string) (windowctl.Window, error) {
+	if strings.TrimSpace(id) == "" {
+		return windowctl.Window{}, fmt.Errorf("empty window id")
 	}
+	windows, err := windowctl.ListWindows(windowctl.Filter{})
+	if err != nil {
+		return windowctl.Window{}, fmt.Errorf("list windows: %w", err)
+	}
+	for _, w := range windows {
+		if w.ID == id {
+			return w, nil
+		}
+	}
+	return windowctl.Window{}, fmt.Errorf("window %q no longer exists (closed?)", id)
+}
+
+// recordLocked stores w's current size. Caller must hold s.mu.
+func (s *ResizerService) recordLocked(w windowctl.Window) (string, error) {
 	if strings.TrimSpace(w.App) == "" {
-		return "", fmt.Errorf("focused window has no app name; cannot record")
+		return "", fmt.Errorf("window has no app name; cannot record")
 	}
 	if w.Bounds.W <= 0 || w.Bounds.H <= 0 {
-		return "", fmt.Errorf("focused window has invalid size %dx%d", w.Bounds.W, w.Bounds.H)
+		return "", fmt.Errorf("window has invalid size %dx%d", w.Bounds.W, w.Bounds.H)
 	}
 	id := normalizeAppID(w.App)
 	p := s.cfg.FindOrCreate(id, w.App)
@@ -137,17 +256,10 @@ func (s *ResizerService) RecordFocused() (string, error) {
 	return fmt.Sprintf("%dx%d already recorded for %s", w.Bounds.W, w.Bounds.H, w.App), nil
 }
 
-// CycleFocused resizes the focused window to the next recorded size for
-// its app. This is what the global hotkey (and the tray item) invoke.
-func (s *ResizerService) CycleFocused() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	w, err := focusedWindow()
-	if err != nil {
-		return "", err
-	}
+// cycleLocked resizes w to its app's next recorded size. Caller must hold s.mu.
+func (s *ResizerService) cycleLocked(w windowctl.Window) (string, error) {
 	if strings.TrimSpace(w.App) == "" {
-		return "", fmt.Errorf("focused window has no app name")
+		return "", fmt.Errorf("window has no app name")
 	}
 	p := s.cfg.Find(normalizeAppID(w.App))
 	if p == nil || len(p.Sizes) == 0 {
@@ -169,6 +281,119 @@ func (s *ResizerService) CycleFocused() (string, error) {
 	return fmt.Sprintf("%s → %dx%d (%d/%d)", w.App, size.W, size.H, p.LastIndex+1, len(p.Sizes)), nil
 }
 
+// RecordFocused stores the focused window's current size in its app
+// preset. Used by the global-hotkey path, which never steals focus.
+func (s *ResizerService) RecordFocused() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, err := focusedWindow()
+	if err != nil {
+		return "", err
+	}
+	return s.recordLocked(w)
+}
+
+// CycleFocused resizes the focused window to the next recorded size for
+// its app. This is what the global hotkey invokes.
+func (s *ResizerService) CycleFocused() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, err := focusedWindow()
+	if err != nil {
+		return "", err
+	}
+	return s.cycleLocked(w)
+}
+
+// GetTarget returns the tracked target window: the most recently focused
+// window outside our own process. The UI acts on this instead of the
+// currently focused window (which is us whenever the user clicks our UI).
+func (s *ResizerService) GetTarget() (WindowInfo, error) {
+	snap, ok := s.tracker.get()
+	if !ok {
+		return WindowInfo{}, fmt.Errorf("no target window yet — focus another app's window first")
+	}
+	// Refresh bounds from a live listing so the UI shows the current
+	// size; fall back to the snapshot if the window vanished mid-poll.
+	if fresh, err := findWindowByID(snap.ID); err == nil {
+		return toWindowInfo(fresh), nil
+	}
+	return toWindowInfo(snap), nil
+}
+
+// ListWindows returns all windows for the manual selector. Our own
+// settings window is flagged via Self so the UI can grey it out.
+func (s *ResizerService) ListWindows() ([]WindowInfo, error) {
+	windows, err := windowctl.ListWindows(windowctl.Filter{})
+	if err != nil {
+		return nil, fmt.Errorf("list windows: %w", err)
+	}
+	self := os.Getpid()
+	out := make([]WindowInfo, 0, len(windows))
+	for _, w := range windows {
+		info := toWindowInfo(w)
+		info.Self = w.PID == self
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// RecordWindow records the current size of the window with the given OS
+// window ID (from GetTarget or ListWindows).
+func (s *ResizerService) RecordWindow(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, err := findWindowByID(id)
+	if err != nil {
+		return "", err
+	}
+	return s.recordLocked(w)
+}
+
+// CycleWindow resizes the window with the given OS window ID to its
+// app's next recorded size.
+func (s *ResizerService) CycleWindow(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, err := findWindowByID(id)
+	if err != nil {
+		return "", err
+	}
+	return s.cycleLocked(w)
+}
+
+// RecordTarget records the tracked target window's current size. This is
+// the UI/tray path — it never depends on current focus.
+func (s *ResizerService) RecordTarget() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, ok := s.tracker.get()
+	if !ok {
+		return "", fmt.Errorf("no target window yet — focus another app's window first")
+	}
+	w, err := findWindowByID(snap.ID)
+	if err != nil {
+		return "", err
+	}
+	return s.recordLocked(w)
+}
+
+// CycleTarget resizes the tracked target window to its app's next
+// recorded size. This is the tray-menu path.
+func (s *ResizerService) CycleTarget() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, ok := s.tracker.get()
+	if !ok {
+		return "", fmt.Errorf("no target window yet — focus another app's window first")
+	}
+	w, err := findWindowByID(snap.ID)
+	if err != nil {
+		return "", err
+	}
+	return s.cycleLocked(w)
+}
+
 // RemoveApp deletes the preset for id.
 func (s *ResizerService) RemoveApp(id string) error {
 	s.mu.Lock()
@@ -186,7 +411,7 @@ func (s *ResizerService) AXGranted() bool {
 }
 
 // RequestAX triggers the OS permission prompt (macOS: opens System
-// Settings on first call).
+// Console on first call).
 func (s *ResizerService) RequestAX() error {
 	return windowctl.RequestAccessibility()
 }

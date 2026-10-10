@@ -18,9 +18,16 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+func init() {
+	// Emitted on the overlay window every time it opens, carrying a fresh
+	// OverlayData snapshot so the picker page renders current window state
+	// without a second round-trip.
+	application.RegisterEvent[OverlayData]("overlay-open")
+}
+
 // main function serves as the application's entry point. WinResizer is a
 // menu-bar/tray app: it lives in the background, resizes the focused window
-// when the global hotkey fires, and opens a small settings window on demand.
+// when the global hotkey fires, and opens a small console window on demand.
 func main() {
 	svc, firstRun, err := NewResizerService()
 	if err != nil {
@@ -29,7 +36,7 @@ func main() {
 	cfg := svc.GetConfig()
 
 	if !svc.AXGranted() {
-		log.Print("Accessibility permission not granted — Move/Resize need it. Open Settings to grant.")
+		log.Print("Accessibility permission not granted — Move/Resize need it. Open Console to grant.")
 	}
 
 	app := application.New(application.Options{
@@ -53,7 +60,7 @@ func main() {
 	})
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "WinResizer Settings",
+		Title:  "WinResizer Console",
 		Width:  520,
 		Height: 640,
 		// Production: show once on first run so the user discovers the app;
@@ -63,11 +70,16 @@ func main() {
 		URL:    "/",
 	})
 
-	// Closing the settings window hides it instead of quitting the app.
+	// Closing the console window hides it instead of quitting the app.
 	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		window.Hide()
 		e.Cancel()
 	})
+
+	// Wire window handles into the service for overlay management.
+	// Same package, so these stay unexported and out of the JS bindings.
+	svc.app = app
+	svc.console = window
 
 	setupTray(app, window, svc)
 	registerHotkey(app, svc, cfg.Hotkey)
@@ -85,22 +97,13 @@ func setupTray(app *application.App, window *application.WebviewWindow, svc *Res
 	tray.SetTooltip("WinResizer")
 
 	menu := app.NewMenu()
-	menu.Add("Open Settings").OnClick(func(_ *application.Context) {
+	menu.Add("Console").OnClick(func(_ *application.Context) {
 		window.Show()
 		window.Focus()
 	})
-	menu.Add("Record focused window size").OnClick(func(_ *application.Context) {
-		if msg, err := svc.RecordFocused(); err != nil {
-			log.Printf("record: %v", err)
-		} else {
-			log.Print(msg)
-		}
-	})
-	menu.Add("Cycle focused window size").OnClick(func(_ *application.Context) {
-		if msg, err := svc.CycleFocused(); err != nil {
-			log.Printf("cycle: %v", err)
-		} else {
-			log.Print(msg)
+	menu.Add("Record").OnClick(func(_ *application.Context) {
+		if err := svc.OpenOverlay(); err != nil {
+			log.Printf("overlay: %v", err)
 		}
 	})
 	menu.AddSeparator()
@@ -124,6 +127,6 @@ func registerHotkey(app *application.App, svc *ResizerService, hotkey string) {
 			log.Print(msg)
 		}
 	}); err != nil {
-		log.Printf("global hotkey %q not registered: %v (change it in Settings, then restart)", hotkey, err)
+		log.Printf("global hotkey %q not registered: %v (change it in Console, then restart)", hotkey, err)
 	}
 }

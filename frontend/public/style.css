@@ -177,6 +177,9 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
+  /* Explicit: vertical scrolling must always work on app pages (the
+     pairing of overflow-x: hidden can compute overflow-y unexpectedly). */
+  overflow-y: auto;
   background: var(--page-bg);
   color: var(--text-primary);
   -webkit-user-select: none;
