@@ -56,9 +56,10 @@ func main() {
 		Title:  "WinResizer Settings",
 		Width:  520,
 		Height: 640,
-		// Show once on first run so the user discovers the app; afterwards
-		// it starts quietly in the tray.
-		Hidden: !firstRun,
+		// Production: show once on first run so the user discovers the app;
+		// afterwards it starts quietly in the tray. Dev builds always show
+		// the window (see buildmode_dev.go / buildmode_production.go).
+		Hidden: !(firstRun || devBuild),
 		URL:    "/",
 	})
 

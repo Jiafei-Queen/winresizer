@@ -1,5 +1,43 @@
-.task
-bin
-frontend/dist
-frontend/node_modules
-./build
+# Build outputs: binaries, .app/.ipa/.dmg/.msix bundles, server binary, etc.
+/bin/
+
+# Stray root-level binaries from `go build`
+/winresizer
+/winresizer.exe
+
+# Go test artifacts
+*.test
+coverage.out
+coverage.html
+
+# Task checksum cache
+/.task/
+
+# Frontend: dependencies, Vite output, Wails bindings (generated from the Go AST)
+/frontend/node_modules/
+/frontend/dist/
+/frontend/bindings/
+
+# Generated icons (regenerated from build/appicon.png + build/appicon.icon)
+/build/darwin/icons.icns
+/build/darwin/Assets.car
+/build/windows/icon.ico
+
+# Generated iOS Xcode project/overlay (wails3 ios overlay:gen)
+/build/ios/xcode/
+
+# Generated Android overlay (wails3 android overlay:gen)
+/build/android/overlay.json
+/build/android/gen/
+
+# Android Gradle/NDK outputs
+/build/android/.gradle/
+/build/android/build/
+/build/android/app/build/
+/build/android/app/.cxx/
+/build/android/local.properties
+*.apk
+*.aab
+
+# macOS
+.DS_Store
