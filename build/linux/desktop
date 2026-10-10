@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=WinResizer
+Comment=Hotkey-driven window resizer
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/winresizer %u
+Terminal=false
+Type=Application
+Icon=winresizer
+Categories=Utility;
+StartupWMClass=winresizer
+
+ 
