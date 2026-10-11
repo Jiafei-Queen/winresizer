@@ -34,6 +34,37 @@ func TestNextSizeClampsBadIndex(t *testing.T) {
 	}
 }
 
+func TestSizeIndexHas(t *testing.T) {
+	ix := NewSizeIndex([]AppPreset{
+		{ID: "safari", Sizes: []Size{{W: 800, H: 600}, {W: 1200, H: 800}}},
+		{ID: "code"}, // app known, no sizes yet
+	})
+
+	if !ix.Has("Safari", 800, 600) || !ix.Has("Safari", 1200, 800) {
+		t.Fatal("Has missed a recorded size")
+	}
+	// Lookup takes an OS-reported name, so it must normalize the same way
+	// RecordSize's preset id does.
+	if !ix.Has("  sAfArI  ", 800, 600) {
+		t.Fatal("Has did not normalize the app name")
+	}
+	if ix.Has("Safari", 999, 999) {
+		t.Fatal("Has matched a size that was never recorded")
+	}
+	if ix.Has("Code", 800, 600) {
+		t.Fatal("Has matched an app that has no sizes")
+	}
+	if ix.Has("Firefox", 800, 600) {
+		t.Fatal("Has matched an app with no preset at all")
+	}
+}
+
+func TestSizeIndexEmptyConfig(t *testing.T) {
+	if NewSizeIndex(nil).Has("Safari", 800, 600) {
+		t.Fatal("empty index reported a hit")
+	}
+}
+
 func TestRecordSizeDedupes(t *testing.T) {
 	p := &AppPreset{}
 	i, isNew := p.RecordSize(800, 600)

@@ -5,7 +5,7 @@
 
   interface Size { w: number; h: number; }
   interface AppPreset { id: string; appName: string; sizes: Size[]; lastIndex: number; }
-  interface TargetWindow { id: string; app: string; title: string; w: number; h: number; monitor: number; self?: boolean; }
+  interface TargetWindow { id: string; app: string; title: string; w: number; h: number; monitor: number; self?: boolean; isRecorded?: boolean; }
   type Theme = 'light' | 'dark';
   type Platform = 'mac' | 'windows' | 'linux';
 
@@ -406,8 +406,11 @@
       {/if}
     </div>
 
+    <!-- The backend marks a target already carrying a saved size. Recording
+         it again could only report "already recorded", so the action is
+         withdrawn rather than left to fail after the round-trip. -->
     <div class="row action-row">
-      <button class="btn primary" onclick={doRecord} disabled={!target}>
+      <button class="btn primary" onclick={doRecord} disabled={!target || target.isRecorded}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M5.5 3.5h9v13l-4.5-3.2-4.5 3.2v-13Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
         </svg>
@@ -420,6 +423,11 @@
         Cycle sizes
       </button>
     </div>
+    {#if target && target.isRecorded}
+      <p class="hint recorded-hint">
+        {target.w} × {target.h} is already recorded for {target.app}. Resize the window to save another size.
+      </p>
+    {/if}
   </section>
 
   <section class="card hotkey-card" aria-labelledby="shortcut-title">
@@ -945,6 +953,11 @@
   }
 
   .hotkey-card .card-heading { margin-bottom: 16px; }
+
+  .recorded-hint {
+    margin-top: 10px;
+    color: var(--text-tertiary);
+  }
 
   .shortcut-badge {
     max-width: 48%;

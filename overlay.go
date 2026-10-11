@@ -44,6 +44,10 @@ type OverlayRect struct {
 	Y     int    `json:"y"`
 	W     int    `json:"w"`
 	H     int    `json:"h"`
+	// IsRecorded marks a window whose current size is already saved for its
+	// app. The picker renders these differently and refuses to select them:
+	// RecordWindow would only report the duplicate after the fact.
+	IsRecorded bool `json:"isRecorded"`
 }
 
 // OverlayPlacement positions the overlay window itself. X/Y follow Wails'
@@ -74,8 +78,10 @@ var systemApps = map[string]bool{
 // computeOverlayData converts monitors + windows into overlay placement
 // + union-local rects. Windows owned by our own process (selfPID) or by
 // OS shell processes are dropped — the overlay must never offer to
-// record itself or the Dock.
-func computeOverlayData(monitors []windowctl.Monitor, windows []windowctl.Window, selfPID int) (OverlayData, error) {
+// record itself or the Dock. sizes flags windows already carrying a
+// recorded size so the picker can mark them instead of offering an
+// action that could only come back as a duplicate.
+func computeOverlayData(monitors []windowctl.Monitor, windows []windowctl.Window, selfPID int, sizes SizeIndex) (OverlayData, error) {
 	if len(monitors) == 0 {
 		return OverlayData{}, fmt.Errorf("no monitors found")
 	}
@@ -116,13 +122,14 @@ func computeOverlayData(monitors []windowctl.Monitor, windows []windowctl.Window
 			continue
 		}
 		data.Windows = append(data.Windows, OverlayRect{
-			ID:    win.ID,
-			App:   win.App,
-			Title: win.Title,
-			X:     b.X - minX,
-			Y:     b.Y - minY,
-			W:     b.W,
-			H:     b.H,
+			ID:         win.ID,
+			App:        win.App,
+			Title:      win.Title,
+			X:          b.X - minX,
+			Y:          b.Y - minY,
+			W:          b.W,
+			H:          b.H,
+			IsRecorded: sizes.Has(win.App, b.W, b.H),
 		})
 	}
 	return data, nil
@@ -160,13 +167,14 @@ func (s *ResizerService) GetOverlayData() (OverlayData, error) {
 	if err != nil {
 		return OverlayData{}, fmt.Errorf("list windows: %w", err)
 	}
-	data, err := computeOverlayData(monitors, windows, os.Getpid())
+	s.mu.Lock()
+	sizes := NewSizeIndex(s.cfg.Apps)
+	ov := s.overlay
+	s.mu.Unlock()
+	data, err := computeOverlayData(monitors, windows, os.Getpid(), sizes)
 	if err != nil {
 		return OverlayData{}, err
 	}
-	s.mu.Lock()
-	ov := s.overlay
-	s.mu.Unlock()
 	if ov != nil {
 		x, y := ov.Position()
 		rebaseOverlay(&data, x, y)
@@ -232,7 +240,9 @@ func (s *ResizerService) OpenOverlay() error {
 	if err != nil {
 		return fmt.Errorf("list windows: %w", err)
 	}
-	data, err := computeOverlayData(monitors, windows, os.Getpid())
+	// Only the placement is used here; the rects are re-fetched by
+	// GetOverlayData, which is where the recorded flags are filled in.
+	data, err := computeOverlayData(monitors, windows, os.Getpid(), nil)
 	if err != nil {
 		return err
 	}

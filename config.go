@@ -211,3 +211,37 @@ func (p *AppPreset) RecordSize(w, h int) (index int, isNew bool) {
 	p.LastIndex = len(p.Sizes) - 1
 	return p.LastIndex, true
 }
+
+// SizeIndex answers "is this exact size already saved for this app?" across
+// every preset. RecordSize only reports a duplicate at write time, which is
+// too late for the UI: both entry points want to know beforehand so they can
+// mark the size instead of offering an action that can only fail.
+//
+// Keyed by Size, which is comparable. Build one per snapshot and query it
+// freely — it does not track later config writes.
+type SizeIndex map[string]map[Size]struct{}
+
+// NewSizeIndex indexes apps by their normalized preset id.
+func NewSizeIndex(apps []AppPreset) SizeIndex {
+	ix := make(SizeIndex, len(apps))
+	for _, p := range apps {
+		set := make(map[Size]struct{}, len(p.Sizes))
+		for _, s := range p.Sizes {
+			set[s] = struct{}{}
+		}
+		ix[p.ID] = set
+	}
+	return ix
+}
+
+// Has reports whether app (an OS-reported name, not a preset id) already
+// has w×h recorded. It applies normalizeAppID the same way the write path
+// does, so callers can pass window.App straight through.
+func (ix SizeIndex) Has(app string, w, h int) bool {
+	set, ok := ix[normalizeAppID(app)]
+	if !ok {
+		return false
+	}
+	_, found := set[Size{W: w, H: h}]
+	return found
+}

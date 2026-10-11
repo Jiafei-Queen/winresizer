@@ -115,6 +115,61 @@
   --titlebar-hover: rgba(255, 255, 255, 0.09);
 }
 
+/* Overlay picker palette. The picker is always dark: it sits directly on an
+   unknown desktop with nothing behind it, so the console's frosted alphas
+   cannot apply and a light panel would wash out over bright wallpapers.
+   These are the console's dark-theme values, so the picker reads as the same
+   product lifted off its window.
+
+   Colours are re-declared under --ov-* rather than overriding the shared
+   tokens: :root.overlay-page and :root[data-theme="dark"] have identical
+   specificity, so reusing names would put correctness on source order alone.
+   Change these together with the dark theme block above. */
+:root.overlay-page {
+  /* The console renders in light mode while this page is up, but the picker
+     must not flip with it — a pale panel over a bright desktop disappears. */
+  color-scheme: dark;
+
+  --ov-scrim: rgba(6, 8, 12, 0.5);
+
+  /* Outlines sit on the dimmed desktop rather than on a panel, so their
+     highlight stays light in every theme. */
+  --ov-stroke: rgba(255, 255, 255, 0.3);
+  --ov-fill-rest: rgba(255, 255, 255, 0.04);
+  --ov-stroke-active: #9db1c2;
+  --ov-fill-active: rgba(157, 177, 194, 0.16);
+  --ov-ring-active: rgba(157, 177, 194, 0.32);
+
+  --ov-panel: rgba(22, 25, 30, 0.96);
+  --ov-panel-border: rgba(255, 255, 255, 0.14);
+  --ov-panel-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --ov-chip: rgba(255, 255, 255, 0.08);
+
+  --ov-text-primary: #e8eaed;
+  --ov-text-secondary: #8e96a0;
+  /* Lifted a step from the console's dark tertiary: this text lands on an
+     arbitrary wallpaper, where the desktop's value reads as noise. */
+  --ov-text-tertiary: #7f8894;
+
+  --ov-accent: #7a8d9c;
+  --ov-accent-hover: #8a9dac;
+  --ov-accent-fg: #111418;
+
+  --ov-danger: #b85c5c;
+  --ov-danger-soft: rgba(184, 92, 92, 0.12);
+  --ov-danger-border: rgba(184, 92, 92, 0.24);
+  --ov-success: #6b9e78;
+  --ov-focus-ring: rgba(122, 141, 156, 0.4);
+
+  /* Windows whose current size is already saved. Same hue as --ov-danger
+     but stepped up, because here it marks state rather than failure. */
+  --ov-stroke-recorded: rgba(200, 116, 116, 0.72);
+  --ov-fill-recorded: rgba(184, 92, 92, 0.08);
+  --ov-panel-recorded: rgba(46, 27, 30, 0.96);
+  /* --ov-danger is too dark to read on the red-tinted panel above. */
+  --ov-text-recorded: #dd8f8f;
+}
+
 * {
   box-sizing: border-box;
 }

@@ -104,7 +104,7 @@ func TestGetTargetPollsOnRead(t *testing.T) {
 	var live []windowctl.Window
 	tr := newTargetTracker(func() ([]windowctl.Window, error) { return live, nil }, 100, targetPollInterval)
 	defer tr.stopLoop()
-	svc := &ResizerService{tracker: tr}
+	svc := &ResizerService{tracker: tr, cfg: DefaultConfig()}
 
 	live = []windowctl.Window{{ID: "1", App: "Safari", PID: 200, Focused: true}}
 	first, err := svc.GetTarget()
@@ -118,6 +118,33 @@ func TestGetTargetPollsOnRead(t *testing.T) {
 	second, err := svc.GetTarget()
 	if err != nil || second.ID != "2" {
 		t.Fatalf("second GetTarget = %+v,%v, want ID=2,nil", second, err)
+	}
+}
+
+// GetTarget must tell the console when the window already carries a saved
+// size, so Record can be disabled instead of failing after the fact.
+func TestGetTargetFlagsRecordedSize(t *testing.T) {
+	win := windowctl.Window{ID: "1", App: "Safari", PID: 200, Focused: true}
+	win.Bounds.W, win.Bounds.H = 800, 600
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return []windowctl.Window{win}, nil }, 100, targetPollInterval)
+	defer tr.stopLoop()
+	svc := &ResizerService{tracker: tr, cfg: DefaultConfig()}
+
+	got, err := svc.GetTarget()
+	if err != nil {
+		t.Fatalf("GetTarget: %v", err)
+	}
+	if got.IsRecorded {
+		t.Fatal("IsRecorded = true for an app with no presets, want false")
+	}
+
+	svc.cfg.Apps = []AppPreset{{ID: "safari", AppName: "Safari", Sizes: []Size{{W: 800, H: 600}}}}
+	got, err = svc.GetTarget()
+	if err != nil {
+		t.Fatalf("GetTarget: %v", err)
+	}
+	if !got.IsRecorded {
+		t.Fatal("IsRecorded = false for a saved 800x600, want true")
 	}
 }
 

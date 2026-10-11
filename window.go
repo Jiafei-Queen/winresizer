@@ -18,14 +18,17 @@ const targetPollInterval = time.Second
 // WindowInfo is the bindings-friendly view of a window shown in the UI.
 // ID is the OS window handle (macOS: CGWindowID) and identifies one window
 // instance; Self marks our own settings window so the UI can grey it out.
+// IsRecorded is set by GetTarget only: this window's current size is already
+// saved for its app, so the console offers no record action for it.
 type WindowInfo struct {
-	ID      string `json:"id"`
-	App     string `json:"app"`
-	Title   string `json:"title"`
-	W       int    `json:"w"`
-	H       int    `json:"h"`
-	Monitor int    `json:"monitor"`
-	Self    bool   `json:"self"`
+	ID         string `json:"id"`
+	App        string `json:"app"`
+	Title      string `json:"title"`
+	W          int    `json:"w"`
+	H          int    `json:"h"`
+	Monitor    int    `json:"monitor"`
+	Self       bool   `json:"self"`
+	IsRecorded bool   `json:"isRecorded"`
 }
 
 // normalizeAppID maps the OS-reported app name to a stable lookup key.
@@ -327,10 +330,15 @@ func (s *ResizerService) GetTarget() (WindowInfo, error) {
 	}
 	// Refresh bounds from a live listing so the UI shows the current
 	// size; fall back to the snapshot if the window vanished mid-poll.
+	win := snap
 	if fresh, err := findWindowByID(snap.ID); err == nil {
-		return toWindowInfo(fresh), nil
+		win = fresh
 	}
-	return toWindowInfo(snap), nil
+	info := toWindowInfo(win)
+	s.mu.Lock()
+	info.IsRecorded = NewSizeIndex(s.cfg.Apps).Has(win.App, win.Bounds.W, win.Bounds.H)
+	s.mu.Unlock()
+	return info, nil
 }
 
 // ListWindows returns all windows for the manual selector. Our own

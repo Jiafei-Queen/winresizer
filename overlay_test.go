@@ -11,7 +11,7 @@ func TestOverlaySingleMonitor(t *testing.T) {
 	w := windowctl.Window{ID: "7", App: "Safari", Title: "Start", PID: 500}
 	w.Bounds.X, w.Bounds.Y, w.Bounds.W, w.Bounds.H = 100, 200, 800, 600
 
-	data, err := computeOverlayData(monitors, []windowctl.Window{w}, 999)
+	data, err := computeOverlayData(monitors, []windowctl.Window{w}, 999, nil)
 	if err != nil {
 		t.Fatalf("computeOverlayData: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestOverlayDualMonitorNegativeOffset(t *testing.T) {
 	w := windowctl.Window{ID: "9", App: "Code", PID: 500}
 	w.Bounds.X, w.Bounds.Y, w.Bounds.W, w.Bounds.H = -1300, 100, 800, 600
 
-	data, err := computeOverlayData(monitors, []windowctl.Window{w}, 999)
+	data, err := computeOverlayData(monitors, []windowctl.Window{w}, 999, nil)
 	if err != nil {
 		t.Fatalf("computeOverlayData: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestOverlaySkipsSelfSystemAndDegenerate(t *testing.T) {
 	good := windowctl.Window{ID: "4", App: "Y", PID: 100}
 	good.Bounds.W, good.Bounds.H = 100, 100
 
-	data, err := computeOverlayData(monitors, []windowctl.Window{self, dock, flat, good}, 999)
+	data, err := computeOverlayData(monitors, []windowctl.Window{self, dock, flat, good}, 999, nil)
 	if err != nil {
 		t.Fatalf("computeOverlayData: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestOverlaySkipsSelfSystemAndDegenerate(t *testing.T) {
 }
 
 func TestOverlayNoMonitors(t *testing.T) {
-	if _, err := computeOverlayData(nil, nil, 1); err == nil {
+	if _, err := computeOverlayData(nil, nil, 1, nil); err == nil {
 		t.Fatal("expected error with no monitors")
 	}
 }
@@ -77,12 +77,39 @@ func TestOverlayNoMonitors(t *testing.T) {
 func TestOverlaySecondaryOnlyUnion(t *testing.T) {
 	// No monitor flagged primary: union is still well-defined.
 	monitors := []windowctl.Monitor{{ID: 5, X: 100, Y: 50, Width: 1440, Height: 900}}
-	data, err := computeOverlayData(monitors, nil, 1)
+	data, err := computeOverlayData(monitors, nil, 1, nil)
 	if err != nil {
 		t.Fatalf("computeOverlayData: %v", err)
 	}
 	if data.Placement != (OverlayPlacement{X: 100, Y: 50, W: 1440, H: 900}) {
 		t.Fatalf("placement = %+v", data.Placement)
+	}
+}
+
+// A window carrying an already-saved size must be flagged so the picker
+// can mark it instead of offering a record that could only be a duplicate.
+func TestOverlayFlagsRecordedSizes(t *testing.T) {
+	monitors := []windowctl.Monitor{{ID: 1, X: 0, Y: 0, Width: 1440, Height: 900, Primary: true}}
+	saved := windowctl.Window{ID: "1", App: "Safari", PID: 500}
+	saved.Bounds.W, saved.Bounds.H = 800, 600
+	other := windowctl.Window{ID: "2", App: "Safari", PID: 500}
+	other.Bounds.W, other.Bounds.H = 1024, 768
+	foreign := windowctl.Window{ID: "3", App: "Code", PID: 500}
+	foreign.Bounds.W, foreign.Bounds.H = 800, 600
+
+	ix := NewSizeIndex([]AppPreset{{
+		ID:    "safari",
+		Sizes: []Size{{W: 800, H: 600}},
+	}})
+	data, err := computeOverlayData(monitors, []windowctl.Window{saved, other, foreign}, 999, ix)
+	if err != nil {
+		t.Fatalf("computeOverlayData: %v", err)
+	}
+	want := map[string]bool{"1": true, "2": false, "3": false}
+	for _, r := range data.Windows {
+		if r.IsRecorded != want[r.ID] {
+			t.Fatalf("window %s IsRecorded = %v, want %v", r.ID, r.IsRecorded, want[r.ID])
+		}
 	}
 }
 
