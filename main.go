@@ -63,6 +63,30 @@ func main() {
 		Title:  "WinResizer Console",
 		Width:  520,
 		Height: 640,
+		// macOS keeps a native window frame so the traffic lights, rounded
+		// corners and zoom/double-click behaviour stay AppKit's own; only the
+		// title bar surface is made transparent (see Mac.TitleBar below) so it
+		// shows the page's frosted background instead of a separate strip of
+		// chrome. Windows and Linux drop the system title bar entirely and let
+		// the frontend draw its own — there the native bar is a solid colour
+		// that visibly clashes with the translucent webview beneath it.
+		Frameless:        runtime.GOOS != "darwin",
+		BackgroundType:   application.BackgroundTypeTranslucent,
+		BackgroundColour: application.RGBA{Alpha: 0},
+		Windows: application.WindowsWindow{
+			BackdropType: application.Acrylic,
+			// Let WebView2 handle the drawn title bar's caption/min/max/close
+			// regions natively, which keeps the Windows 11 snap-layouts menu on
+			// hover. Harmless if the installed WebView2 runtime is too old: the
+			// frontend buttons still work through the JS Window API.
+			NonClientRegionSupport: true,
+		},
+		Mac: application.MacWindow{
+			Backdrop: application.MacBackdropTranslucent,
+			// Transparent title bar with the title text hidden, content runs
+			// edge to edge underneath it. The native traffic lights remain.
+			TitleBar: application.MacTitleBarHidden,
+		},
 		// Production: show once on first run so the user discovers the app;
 		// afterwards it starts quietly in the tray. Dev builds always show
 		// the window (see buildmode_dev.go / buildmode_production.go).

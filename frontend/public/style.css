@@ -1,165 +1,118 @@
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --page-bg: #f4f6fa;
-  --surface: #ffffff;
-  --surface-subtle: #f6f8fc;
-  --border: #e4e9f1;
-  --text-primary: #20283a;
-  --text-secondary: #687487;
-  --text-tertiary: #8792a3;
-  --accent: #4d69d8;
-  --accent-hover: #3f5bc8;
+  /* Motion tokens — Quiet preset */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Core palette — Frosted Workspace (light). These alphas sit on top of the
+     native blurred backdrop, so they decide how frosted the window reads:
+     thinner = more desktop showing through, but also a darker page, since
+     whatever is behind the window bleeds into it. Light keeps the original
+     (thicker) values so the page stays bright; dark can afford to thin out. */
+  --page-bg: rgba(242, 244, 247, 0.58);
+  --surface: rgba(255, 255, 255, 0.42);
+  --surface-raised: rgba(255, 255, 255, 0.58);
+  --surface-subtle: rgba(255, 255, 255, 0.24);
+
+  --text-primary: #181b21;
+  --text-secondary: #5b6573;
+  --text-tertiary: #7d8795;
+
+  --accent: #3d4f5f;
+  --accent-hover: #2f3e4b;
   --accent-foreground: #ffffff;
-  --accent-soft: #edf1ff;
-  --success: #327653;
-  --success-soft: #edf7f1;
-  --success-border: #d9eddf;
-  --warning: #94611b;
-  --warning-soft: #fff7e9;
-  --warning-surface: #fffaf0;
-  --warning-border: #f0e2c5;
-  --warning-icon-surface: #fff0d4;
-  --danger: #b9505a;
-  --danger-soft: #fff1f2;
-  --danger-border: #f5dadd;
+  --accent-soft: rgba(61, 79, 95, 0.1);
 
-  --brand-border: #dce4ff;
-  --focus-surface: #f9fbff;
-  --focus-border: #dfe6f5;
-  --shadow-card: 0 4px 16px rgb(34 48 76 / 4%);
-  --shadow-focus: 0 7px 22px rgb(54 78 139 / 7%);
-  --focus-ring: rgb(77 105 216 / 35%);
+  --border: rgba(24, 27, 33, 0.1);
+  --border-strong: rgba(24, 27, 33, 0.18);
+  --divider: rgba(24, 27, 33, 0.08);
 
-  --icon-surface: #ffffff;
-  --icon-muted: #6f7b91;
-  --icon-hover-border: #dce4ff;
-  --window-border: #edf0f5;
-  --window-icon: #5871cb;
-  --window-icon-surface: #e9efff;
-  --dimension: #304781;
-  --dimension-muted: #99a5bb;
+  --success: #4a6b52;
+  --success-soft: rgba(74, 107, 82, 0.1);
+  --success-border: rgba(74, 107, 82, 0.22);
+  --warning: #8a6d2f;
+  --warning-soft: rgba(138, 109, 47, 0.1);
+  --warning-border: rgba(138, 109, 47, 0.22);
+  --danger: #8b3d3d;
+  --danger-soft: rgba(139, 61, 61, 0.1);
+  --danger-border: rgba(139, 61, 61, 0.22);
 
-  --secondary-text: #4f5c73;
-  --secondary-surface: #f7f8fb;
-  --secondary-border: #e2e7ef;
-  --secondary-hover-border: #dce4ff;
-  --request-surface: #ffffff;
-  --request-border: #ead7b0;
-  --request-hover-surface: #fff3dc;
-  --request-hover-border: #dfc58f;
-  --button-shadow: 0 3px 8px rgb(77 105 216 / 16%);
-  --button-hover-shadow: 0 5px 12px rgb(77 105 216 / 22%);
+  --focus-ring: rgba(61, 79, 95, 0.35);
+  --focus-ring-offset: #f2f4f7;
 
-  --shortcut-text: #526079;
-  --shortcut-surface: #f5f7fa;
-  --shortcut-border: #e7ebf1;
-  --input-surface: #fafbfc;
-  --input-border: #e1e6ee;
-  --input-placeholder: #a0a9b8;
-  --input-focus-border: #8195e6;
-  --input-focus-ring: rgb(77 105 216 / 12%);
+  --input-bg: rgba(255, 255, 255, 0.35);
+  --input-bg-focus: rgba(255, 255, 255, 0.55);
 
-  --count-text: #5d6c86;
-  --count-surface: #f3f5f9;
-  --count-border: #e5eaf1;
-  --divider: #edf0f4;
-  --empty-text: #4d586c;
-  --preset-text: #303a4d;
-  --chip-text: #59677e;
-  --chip-surface: #f5f7fa;
-  --chip-border: #e6eaf1;
-  --remove-muted: #8791a1;
+  --toast-surface: rgba(255, 255, 255, 0.86);
+  --toast-border: rgba(24, 27, 33, 0.12);
+  --toast-shadow: 0 12px 40px rgba(16, 22, 34, 0.12);
 
-  --toast-text: #344158;
-  --toast-surface: rgb(255 255 255 / 96%);
-  --toast-border: #e1e7f0;
-  --toast-shadow: 0 10px 30px rgb(29 43 68 / 16%);
-  --card-radius: 16px;
+  /* Drawn title bar (Windows/Linux): hover tints track the Win11 caption
+     buttons, including the red close button. */
+  --titlebar-hover: rgba(24, 27, 33, 0.08);
+  --titlebar-hover-close: #c42b1c;
+  --titlebar-hover-close-fg: #ffffff;
+
+  /* Typography */
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-sans:
+    "Switzer", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Layout */
+  --container-max: 520px;
+  --radius: 0px;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --page-bg: #11161e;
-  --surface: #1b222d;
-  --surface-subtle: #171e28;
-  --border: #303a49;
-  --text-primary: #e7ebf3;
-  --text-secondary: #a4afbf;
-  --text-tertiary: #8793a6;
-  --accent: #8da0ff;
-  --accent-hover: #9eafff;
-  --accent-foreground: #131a29;
-  --accent-soft: #252f4b;
-  --success: #88d2a7;
-  --success-soft: #1d3027;
-  --success-border: #355443;
-  --warning: #f0c77e;
-  --warning-soft: #352c1e;
-  --warning-surface: #211f1a;
-  --warning-border: #4a3d27;
-  --warning-icon-surface: #3b301e;
-  --danger: #f0a0a7;
-  --danger-soft: #38262c;
-  --danger-border: #56343b;
+  --page-bg: rgba(22, 25, 30, 0.5);
+  --surface: rgba(35, 39, 46, 0.45);
+  --surface-raised: rgba(45, 50, 59, 0.56);
+  --surface-subtle: rgba(35, 39, 46, 0.27);
 
-  --brand-border: #374368;
-  --focus-surface: #1d2532;
-  --focus-border: #354158;
-  --shadow-card: 0 4px 16px rgb(0 0 0 / 14%);
-  --shadow-focus: 0 7px 22px rgb(0 0 0 / 18%);
-  --focus-ring: rgb(136 156 255 / 42%);
+  --text-primary: #e8eaed;
+  --text-secondary: #8e96a0;
+  --text-tertiary: #6e7681;
 
-  --icon-surface: #252e3b;
-  --icon-muted: #b1bdd0;
-  --icon-hover-border: #4a5d91;
-  --window-border: #2a3545;
-  --window-icon: #b2c0ff;
-  --window-icon-surface: #293553;
-  --dimension: #dce4ff;
-  --dimension-muted: #8b98ad;
+  --accent: #7a8d9c;
+  --accent-hover: #8a9dac;
+  --accent-foreground: #111418;
+  --accent-soft: rgba(122, 141, 156, 0.14);
 
-  --secondary-text: #d4dceb;
-  --secondary-surface: #252e3b;
-  --secondary-border: #3b4657;
-  --secondary-hover-border: #5367a8;
-  --request-surface: #2a2b2b;
-  --request-border: #5b4b30;
-  --request-hover-surface: #393020;
-  --request-hover-border: #80683d;
-  --button-shadow: 0 3px 9px rgb(0 0 0 / 18%);
-  --button-hover-shadow: 0 5px 14px rgb(0 0 0 / 25%);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --divider: rgba(255, 255, 255, 0.08);
 
-  --shortcut-text: #c8d2e2;
-  --shortcut-surface: #151b25;
-  --shortcut-border: #394556;
-  --input-surface: #151b25;
-  --input-border: #3b4658;
-  --input-placeholder: #8390a3;
-  --input-focus-border: #91a4ff;
-  --input-focus-ring: rgb(129 149 245 / 17%);
+  --success: #6b9e78;
+  --success-soft: rgba(107, 158, 120, 0.12);
+  --success-border: rgba(107, 158, 120, 0.24);
+  --warning: #b89a4a;
+  --warning-soft: rgba(184, 154, 74, 0.12);
+  --warning-border: rgba(184, 154, 74, 0.24);
+  --danger: #b85c5c;
+  --danger-soft: rgba(184, 92, 92, 0.12);
+  --danger-border: rgba(184, 92, 92, 0.24);
 
-  --count-text: #c0cbe0;
-  --count-surface: #252e3b;
-  --count-border: #3b4657;
-  --divider: #2d3746;
-  --empty-text: #bdc7d7;
-  --preset-text: #dce3ed;
-  --chip-text: #c1cbda;
-  --chip-surface: #222b37;
-  --chip-border: #394555;
-  --remove-muted: #9aa6b8;
+  --focus-ring: rgba(122, 141, 156, 0.4);
+  --focus-ring-offset: #16191e;
 
-  --toast-text: #e4eaf3;
-  --toast-surface: rgb(37 46 59 / 97%);
-  --toast-border: #3b4759;
-  --toast-shadow: 0 10px 30px rgb(0 0 0 / 32%);
+  --input-bg: rgba(35, 39, 46, 0.45);
+  --input-bg-focus: rgba(45, 50, 59, 0.65);
+
+  --toast-surface: rgba(35, 39, 46, 0.92);
+  --toast-border: rgba(255, 255, 255, 0.12);
+  --toast-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+
+  --titlebar-hover: rgba(255, 255, 255, 0.09);
 }
 
 * {
@@ -177,14 +130,41 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
-  /* Explicit: vertical scrolling must always work on app pages (the
-     pairing of overflow-x: hidden can compute overflow-y unexpectedly). */
   overflow-y: auto;
-  background: var(--page-bg);
+  /* Keep the WebView backing clear; Wails supplies the native window glass. */
+  background: transparent;
   color: var(--text-primary);
   -webkit-user-select: none;
   user-select: none;
-  --wails-draggable: drag;
+  /* Dragging is scoped to .titlebar in App.svelte. Marking the whole body a
+     drag area makes every blank pixel move the window — it fights scrolling
+     and, now that the title bar is ours to draw, is no longer needed. */
+  --wails-draggable: no-drag;
+}
+
+/* Only the Console receives a tint. The overlay shares this bundle but must
+   stay genuinely transparent so the picker never blurs the desktop. */
+:root.console-page #app {
+  /* Viewport-locked shell: the drawn title bar and the WinResizer header
+     stay pinned while only the cards underneath them scroll. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      1200px 600px at 20% -10%,
+      rgba(122, 141, 156, 0.1),
+      transparent
+    ),
+    radial-gradient(
+      900px 500px at 110% 20%,
+      rgba(61, 79, 95, 0.07),
+      transparent
+    ),
+    var(--page-bg);
 }
 
 #app {
@@ -201,4 +181,15 @@ input {
 input {
   -webkit-user-select: text;
   user-select: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -11,5 +11,6 @@ if (window.location.hash === "#overlay") {
   document.documentElement.classList.add("overlay-page");
   mount(Overlay, { target });
 } else {
+  document.documentElement.classList.add("console-page");
   mount(App, { target });
 }

@@ -1,21 +1,39 @@
 <script lang="ts">
   import {onMount} from 'svelte';
+  import {Events, System, Window} from "@wailsio/runtime";
   import {ResizerService} from "../bindings/winresizer";
 
   interface Size { w: number; h: number; }
   interface AppPreset { id: string; appName: string; sizes: Size[]; lastIndex: number; }
   interface TargetWindow { id: string; app: string; title: string; w: number; h: number; monitor: number; self?: boolean; }
   type Theme = 'light' | 'dark';
+  type Platform = 'mac' | 'windows' | 'linux';
 
   const themeStorageKey = 'winresizer-theme';
+
+  function detectPlatform(): Platform {
+    // Wails injects window._wails.environment before any page script runs, so
+    // this is authoritative inside the app. The UA fallback only matters when
+    // the page is opened in a plain browser (vite dev), where the drawn title
+    // bar still needs the right height and controls.
+    if (System.IsMac()) return 'mac';
+    if (System.IsWindows()) return 'windows';
+    if (System.IsLinux()) return 'linux';
+    const ua = navigator.userAgent;
+    if (/Mac|iPhone|iPad/i.test(ua)) return 'mac';
+    if (/Windows/i.test(ua)) return 'windows';
+    return 'linux';
+  }
+
+  // macOS draws no caption buttons — it keeps the native traffic lights and
+  // only needs a strip tall enough to keep them clear of the content.
+  const platform: Platform = detectPlatform();
+  document.documentElement.dataset.platform = platform;
 
   let hotkey: string = $state('');
   let newHotkey: string = $state('');
   let axGranted: boolean = $state(false);
   let apps: AppPreset[] = $state([]);
-  // Tracked target: the last window focused outside this app. Window
-  // picking itself lives in the overlay (OpenOverlay); the console only
-  // shows the auto target and cycles it.
   let target: TargetWindow | null = $state(null);
   let message: string = $state('');
   let theme: Theme = $state(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
@@ -54,6 +72,48 @@
     try { return JSON.stringify(e); } catch { return String(e); }
   }
 
+  let maximised: boolean = $state(false);
+  let maxSyncTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function syncMaximised(): Promise<void> {
+    try {
+      maximised = await Window.IsMaximised();
+    } catch {
+      // Window API unavailable (browser preview) — keep the last known state.
+    }
+  }
+
+  // Linux never forwards a maximise event to the frontend, so re-read the
+  // real state after every resize instead of trusting the event stream alone.
+  function queueMaximisedSync(): void {
+    clearTimeout(maxSyncTimer);
+    maxSyncTimer = setTimeout(() => void syncMaximised(), 120);
+  }
+
+  function minimiseWindow(): void {
+    void Window.Minimise();
+  }
+
+  function toggleMaximiseWindow(): void {
+    void Window.ToggleMaximise();
+    void syncMaximised();
+  }
+
+  function closeWindow(): void {
+    // Reaches the Go WindowClosing hook, which hides to tray rather than
+    // quitting — the same behaviour the native close button had.
+    void Window.Close();
+  }
+
+  function handleTitlebarDoubleClick(): void {
+    // On macOS the runtime claims the double click on a drag region and routes
+    // it to the native titlebar action, so handling it here too would cancel
+    // out and leave the window untouched. Everywhere else nobody else does it.
+    if (platform === 'mac') return;
+    void Window.ToggleMaximise();
+    void syncMaximised();
+  }
+
   async function refresh(): Promise<void> {
     try {
       const cfg: any = await ResizerService.GetConfig();
@@ -74,8 +134,6 @@
     }
   }
 
-  // Opens the overlay picker: the console hides, the user clicks a
-  // window on screen, confirms, and control returns here.
   async function doPick(): Promise<void> {
     try {
       await ResizerService.OpenOverlay();
@@ -123,6 +181,24 @@
     }
   }
 
+  // Kept separate from the async onMount below: a cleanup returned from an
+  // async callback becomes a resolved promise, which Svelte cannot unmount.
+  onMount(() => {
+    void syncMaximised();
+
+    const offs = [
+      Events.On('common:WindowMaximise', () => { maximised = true; }),
+      Events.On('common:WindowUnMaximise', () => { maximised = false; }),
+      Events.On('common:WindowRestore', () => { maximised = false; }),
+      Events.On('common:WindowDidResize', queueMaximisedSync),
+    ];
+
+    return () => {
+      offs.forEach((off) => off());
+      clearTimeout(maxSyncTimer);
+    };
+  });
+
   onMount(async () => {
     try {
       const savedTheme = localStorage.getItem(themeStorageKey);
@@ -140,18 +216,53 @@
   });
 </script>
 
+<div class="titlebar">
+  <div
+    class="titlebar-drag"
+    role="presentation"
+    ondblclick={handleTitlebarDoubleClick}
+  ></div>
+  {#if platform !== 'mac'}
+    <div class="window-controls">
+      <button class="window-control" onclick={minimiseWindow} aria-label="Minimise window" title="Minimise">
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" /></svg>
+      </button>
+      <button
+        class="window-control"
+        onclick={toggleMaximiseWindow}
+        aria-label={maximised ? 'Restore window' : 'Maximise window'}
+        title={maximised ? 'Restore' : 'Maximise'}
+      >
+        {#if maximised}
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <rect x="3.5" y="0.5" width="6" height="6" />
+            <path d="M3.5 3.5H0.5v6h6V6.5" />
+          </svg>
+        {:else}
+          <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" /></svg>
+        {/if}
+      </button>
+      <button class="window-control window-control-close" onclick={closeWindow} aria-label="Close window" title="Close">
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" /></svg>
+      </button>
+    </div>
+  {/if}
+</div>
+
 <main class="container">
   <header class="app-header">
-    <div class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none">
-        <rect x="3.5" y="4" width="17" height="16" rx="3" stroke="currentColor" stroke-width="1.7" />
-        <path d="M8 9h8M8 13h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-        <circle cx="16.5" cy="15.5" r="1.5" fill="currentColor" />
-      </svg>
-    </div>
-    <div class="brand-copy">
-      <p class="eyebrow">WINDOW WORKSPACE</p>
-      <h1 class="title">WinResizer</h1>
+    <div class="brand-lockup">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <rect x="3.5" y="4" width="17" height="16" stroke="currentColor" stroke-width="1.7" />
+          <path d="M8 9h8M8 13h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+          <circle cx="16.5" cy="15.5" r="1.5" fill="currentColor" />
+        </svg>
+      </div>
+      <div class="brand-copy">
+        <h1 class="title">WinResizer</h1>
+        <p class="subtitle header-subtitle">Save window sizes and switch between them with a shortcut.</p>
+      </div>
     </div>
     <div class="header-actions">
       <button
@@ -171,19 +282,12 @@
           </svg>
         {/if}
       </button>
-      <span
-        class:needs-attention={!axGranted}
-        class="app-status"
-        aria-label={axGranted ? 'Accessibility permission granted' : 'Accessibility setup needed'}
-      >
-        <span class="status-dot" aria-hidden="true"></span>
-        {axGranted ? 'Ready' : 'Setup'}
-      </span>
     </div>
   </header>
 
-  <p class="subtitle">Save window sizes and switch between them with a shortcut.</p>
-
+  <!-- Pinned above: this wrapper is the only scrollable region, so the
+       title bar and the WinResizer header never move with the cards. -->
+  <div class="content">
   {#if !axGranted}
     <section class="permission-card" aria-label="Accessibility permission required">
       <div class="permission-icon" aria-hidden="true">
@@ -193,7 +297,7 @@
         </svg>
       </div>
       <div class="permission-copy">
-        <p class="eyebrow">ACCESSIBILITY</p>
+        <p class="eyebrow">Accessibility</p>
         <h2 class="permission-title">Allow window control</h2>
         <p class="hint">WinResizer needs permission to move and resize windows.</p>
       </div>
@@ -204,8 +308,8 @@
   <section class="card focus-card" aria-labelledby="active-window-title">
     <div class="card-heading focus-heading">
       <div>
-        <p class="eyebrow">TARGET WINDOW</p>
-        <h2 id="active-window-title">Target window</h2>
+        <p class="eyebrow">Target window</p>
+        <h2 id="active-window-title">Active target</h2>
       </div>
       <button class="icon-btn" onclick={refreshTarget} aria-label="Refresh target window" title="Refresh target window">
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -219,7 +323,7 @@
         <div class="window-overview">
           <div class="window-glyph" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none">
-              <rect x="3.5" y="4" width="17" height="16" rx="3" stroke="currentColor" stroke-width="1.6" />
+              <rect x="3.5" y="4" width="17" height="16" stroke="currentColor" stroke-width="1.6" />
               <path d="M3.8 9h16.4" stroke="currentColor" stroke-width="1.6" />
               <circle cx="7" cy="6.5" r=".7" fill="currentColor" />
               <circle cx="9.5" cy="6.5" r=".7" fill="currentColor" />
@@ -244,7 +348,7 @@
       <div class="window-summary empty-window">
         <div class="window-glyph" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
-            <rect x="3.5" y="4" width="17" height="16" rx="3" stroke="currentColor" stroke-width="1.6" />
+            <rect x="3.5" y="4" width="17" height="16" stroke="currentColor" stroke-width="1.6" />
             <path d="M3.8 9h16.4" stroke="currentColor" stroke-width="1.6" />
             <circle cx="7" cy="6.5" r=".7" fill="currentColor" />
             <circle cx="9.5" cy="6.5" r=".7" fill="currentColor" />
@@ -276,7 +380,7 @@
   <section class="card hotkey-card" aria-labelledby="shortcut-title">
     <div class="card-heading">
       <div>
-        <p class="eyebrow">QUICK ACTION</p>
+        <p class="eyebrow">Quick action</p>
         <h2 id="shortcut-title">Keyboard shortcut</h2>
       </div>
       <span class="shortcut-badge" aria-label={`Current shortcut: ${hotkey}`}>{hotkey || '—'}</span>
@@ -292,7 +396,7 @@
   <section class="card presets-card" aria-labelledby="presets-title">
     <div class="card-heading presets-heading">
       <div>
-        <p class="eyebrow">YOUR SAVED SIZES</p>
+        <p class="eyebrow">Your saved sizes</p>
         <h2 id="presets-title">Presets</h2>
       </div>
       <span class="count-badge" aria-label={`${apps.length} saved apps`}>{apps.length}</span>
@@ -325,6 +429,7 @@
       </div>
     {/if}
   </section>
+  </div>
 </main>
 
 {#if message}
@@ -334,21 +439,118 @@
 {/if}
 
 <style>
+  /* The window title bar is drawn here rather than by the OS. It sits above
+     the content and shares #app's frosted background, so the window reads as
+     one continuous surface instead of a page pasted under a strip of chrome. */
+  .titlebar {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    width: 100%;
+    height: 32px;
+    background: transparent;
+  }
+
+  :global(:root[data-platform='mac']) .titlebar {
+    /* Matches the native title bar the traffic lights are centred in, so the
+       gap between them and the content is the same as it always was. */
+    height: 28px;
+  }
+
+  .titlebar-drag {
+    flex: 1 1 auto;
+    min-width: 0;
+    --wails-draggable: drag;
+  }
+
+  .window-controls {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: stretch;
+    height: 100%;
+  }
+
+  .window-control {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 100%;
+    padding: 0;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 0;
+    /* Caption buttons take the arrow cursor on Windows and Linux. */
+    cursor: default;
+    transition: background var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+  }
+
+  .window-control svg {
+    width: 10px;
+    height: 10px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1;
+  }
+
+  .window-control:hover {
+    color: var(--text-primary);
+    background: var(--titlebar-hover);
+  }
+
+  .window-control:active svg {
+    opacity: 0.6;
+  }
+
+  .window-control-close:hover {
+    color: var(--titlebar-hover-close-fg);
+    background: var(--titlebar-hover-close);
+  }
+
+  .window-control:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+
   .container {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    width: min(100%, 580px);
-    min-height: 100vh;
-    min-height: 100dvh;
+    gap: 16px;
+    flex: 1 1 auto;
+    /* Fills the viewport beneath the title bar and clips instead of growing;
+       the cards scroll inside .content, the header above it does not. */
+    min-height: 0;
+    width: min(100%, var(--container-max));
     margin: 0 auto;
-    padding: 25px 22px 30px;
+    padding: 28px 24px 0;
+  }
+
+  .content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    /* Scrolling here must never chain back out to the window. */
+    overscroll-behavior: contain;
+    padding-bottom: 34px;
+    scrollbar-width: thin;
   }
 
   .app-header {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .brand-lockup {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    min-width: 0;
   }
 
   .brand-mark {
@@ -358,36 +560,38 @@
     height: 44px;
     flex: 0 0 auto;
     color: var(--accent);
-    background: var(--accent-soft);
-    border: 1px solid var(--brand-border);
-    border-radius: 14px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
   }
 
   .brand-mark svg { width: 24px; height: 24px; }
   .brand-copy { min-width: 0; }
 
   .eyebrow {
-    margin: 0 0 4px;
+    margin: 0 0 5px;
     color: var(--text-tertiary);
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: .12em;
+    font-weight: 550;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
 
   .title {
-    margin: 0;
+    margin: 0 0 5px;
     color: var(--text-primary);
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -.035em;
-    line-height: 1.15;
+    font-family: var(--font-serif);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
   }
 
   .header-actions {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     margin-left: auto;
+    padding-top: 2px;
   }
 
   .theme-toggle {
@@ -397,90 +601,68 @@
     height: 36px;
     flex: 0 0 auto;
     padding: 0;
-    color: var(--icon-muted);
-    background: var(--icon-surface);
+    color: var(--text-secondary);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius);
     cursor: pointer;
-    transition: color .16s ease, background .16s ease, border-color .16s ease;
+    transition: color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
   }
 
   .theme-toggle:hover {
     color: var(--accent);
-    background: var(--accent-soft);
-    border-color: var(--brand-border);
+    background: var(--surface-raised);
+    border-color: var(--border-strong);
   }
 
   .theme-toggle svg { width: 18px; height: 18px; }
 
-  .app-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 10px;
-    color: var(--success);
-    background: var(--success-soft);
-    border: 1px solid var(--success-border);
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 650;
-    white-space: nowrap;
-  }
-
-  .app-status.needs-attention {
-    color: var(--warning);
-    background: var(--warning-soft);
-    border-color: var(--warning-border);
-  }
-
-  .status-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: currentColor;
-  }
-
   .subtitle {
-    margin: -5px 0 1px 56px;
+    margin: 0;
     color: var(--text-secondary);
     font-size: 12px;
     line-height: 1.5;
   }
 
+  .header-subtitle {
+    max-width: 260px;
+  }
+
   .card,
   .permission-card {
     border: 1px solid var(--border);
-    border-radius: var(--card-radius);
+    border-radius: var(--radius);
     background: var(--surface);
-    box-shadow: var(--shadow-card);
   }
 
-  .card { padding: 18px; }
+  .card { padding: 20px; }
 
   .card-heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 15px;
+    margin-bottom: 16px;
   }
 
   .card h2 {
     margin: 0;
     color: var(--text-primary);
-    font-size: 15px;
-    font-weight: 650;
-    letter-spacing: -.015em;
+    font-family: var(--font-serif);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
   .permission-card {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 13px 15px;
-    background: var(--warning-surface);
+    gap: 14px;
+    padding: 14px 16px;
+    background: var(--warning-soft);
     border-color: var(--warning-border);
-    box-shadow: none;
   }
 
   .permission-icon {
@@ -490,8 +672,8 @@
     height: 36px;
     flex: 0 0 auto;
     color: var(--warning);
-    background: var(--warning-icon-surface);
-    border-radius: 11px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
   }
 
   .permission-icon svg { width: 19px; height: 19px; }
@@ -501,8 +683,9 @@
   .permission-title {
     margin: 0 0 3px;
     color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 650;
+    font-family: var(--font-serif);
+    font-size: 16px;
+    font-weight: 600;
   }
 
   .hint {
@@ -513,9 +696,8 @@
   }
 
   .focus-card {
-    background: linear-gradient(145deg, var(--surface) 30%, var(--focus-surface) 100%);
-    border-color: var(--focus-border);
-    box-shadow: var(--shadow-focus);
+    background: var(--surface-raised);
+    border-color: var(--border-strong);
   }
 
   .focus-heading { margin-bottom: 14px; }
@@ -527,35 +709,36 @@
     height: 36px;
     flex: 0 0 auto;
     padding: 0;
-    color: var(--icon-muted);
-    background: var(--icon-surface);
+    color: var(--text-secondary);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius);
     cursor: pointer;
-    transition: color .16s ease, background .16s ease, border-color .16s ease;
+    transition: color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
   }
 
   .icon-btn:hover {
     color: var(--accent);
-    background: var(--accent-soft);
-    border-color: var(--icon-hover-border);
+    background: var(--surface-raised);
+    border-color: var(--border-strong);
   }
 
   .icon-btn svg { width: 18px; height: 18px; }
 
   .window-summary {
     min-width: 0;
-    margin-bottom: 14px;
-    padding: 14px 15px;
+    margin-bottom: 16px;
+    padding: 16px;
     background: var(--surface-subtle);
-    border: 1px solid var(--window-border);
-    border-radius: 13px;
+    border: 1px solid var(--border);
   }
 
   .window-overview {
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 12px;
     min-width: 0;
   }
 
@@ -565,9 +748,9 @@
     width: 38px;
     height: 38px;
     flex: 0 0 auto;
-    color: var(--window-icon);
-    background: var(--window-icon-surface);
-    border-radius: 11px;
+    color: var(--accent);
+    background: var(--surface);
+    border: 1px solid var(--border);
   }
 
   .window-glyph svg { width: 21px; height: 21px; }
@@ -578,12 +761,11 @@
     margin-left: auto;
     padding: 4px 8px;
     color: var(--text-tertiary);
-    background: var(--surface-subtle);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 999px;
     font-size: 10px;
-    font-weight: 650;
-    letter-spacing: .04em;
+    font-weight: 600;
+    letter-spacing: 0.01em;
     white-space: nowrap;
   }
 
@@ -591,7 +773,7 @@
     overflow: hidden;
     color: var(--text-primary);
     font-size: 13px;
-    font-weight: 650;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -608,27 +790,28 @@
   .dimensions {
     display: flex;
     align-items: baseline;
-    gap: 7px;
-    margin: 13px 0 0;
-    color: var(--dimension);
-    font-size: 31px;
+    gap: 8px;
+    margin: 14px 0 0;
+    color: var(--text-primary);
+    font-family: var(--font-serif);
+    font-size: 34px;
     font-variant-numeric: tabular-nums;
-    font-weight: 680;
-    letter-spacing: -.045em;
-    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1;
   }
 
   .dimension-separator {
-    color: var(--dimension-muted);
+    color: var(--text-tertiary);
     font-size: 22px;
     font-weight: 400;
   }
 
   .dimensions small {
-    margin-left: 1px;
+    margin-left: 2px;
     color: var(--text-tertiary);
     font-size: 11px;
-    font-weight: 550;
+    font-weight: 500;
     letter-spacing: 0;
   }
 
@@ -642,7 +825,7 @@
   .empty-window strong {
     color: var(--text-primary);
     font-size: 12px;
-    font-weight: 650;
+    font-weight: 600;
   }
 
   .empty-window p {
@@ -652,7 +835,7 @@
     line-height: 1.45;
   }
 
-  .row { display: flex; align-items: center; gap: 9px; }
+  .row { display: flex; align-items: center; gap: 10px; }
   .action-row .primary { flex: 1.15; }
   .action-row .secondary { flex: 1; }
 
@@ -666,77 +849,69 @@
     color: var(--accent-foreground);
     background: var(--accent);
     border: 1px solid transparent;
-    border-radius: 10px;
-    box-shadow: var(--button-shadow);
+    border-radius: var(--radius);
     font-size: 12px;
-    font-weight: 650;
+    font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
-    transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+    transition: background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                transform var(--duration-fast) var(--ease-out);
   }
 
   .btn:hover {
     background: var(--accent-hover);
-    box-shadow: var(--button-hover-shadow);
   }
 
-  .btn:active { transform: translateY(1px); }
+  .btn:active { transform: scale(0.98); }
   .btn svg { width: 16px; height: 16px; flex: 0 0 auto; }
 
   .btn.secondary,
   .btn.save-btn {
-    color: var(--secondary-text);
-    background: var(--secondary-surface);
-    border-color: var(--secondary-border);
-    box-shadow: none;
+    color: var(--text-primary);
+    background: var(--surface);
+    border-color: var(--border);
   }
 
   .btn.secondary:hover,
   .btn.save-btn:hover {
     color: var(--accent);
-    background: var(--accent-soft);
-    border-color: var(--secondary-hover-border);
-    box-shadow: none;
+    background: var(--surface-raised);
+    border-color: var(--border-strong);
   }
 
   .btn.request-btn {
     min-height: 36px;
     padding: 0 13px;
     color: var(--warning);
-    background: var(--request-surface);
-    border-color: var(--request-border);
-    box-shadow: none;
+    background: var(--surface);
+    border-color: var(--warning-border);
     font-size: 11px;
   }
 
   .btn.request-btn:hover {
-    background: var(--request-hover-surface);
-    border-color: var(--request-hover-border);
+    background: var(--warning-soft);
+    border-color: var(--warning);
   }
 
   .btn:focus-visible,
   .icon-btn:focus-visible,
-  .remove-btn:focus-visible {
-    outline: 3px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-
+  .remove-btn:focus-visible,
   .theme-toggle:focus-visible {
-    outline: 3px solid var(--focus-ring);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
 
-  .hotkey-card .card-heading { margin-bottom: 15px; }
+  .hotkey-card .card-heading { margin-bottom: 16px; }
 
   .shortcut-badge {
     max-width: 48%;
     overflow: hidden;
-    padding: 7px 9px;
-    color: var(--shortcut-text);
-    background: var(--shortcut-surface);
-    border: 1px solid var(--shortcut-border);
-    border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 6px 9px;
+    color: var(--text-secondary);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    font-family: "Switzer", ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     text-overflow: ellipsis;
@@ -755,22 +930,28 @@
     width: 100%;
     min-width: 0;
     height: 40px;
-    padding: 0 11px;
+    padding: 0 12px;
     color: var(--text-primary);
-    background: var(--input-surface);
-    border: 1px solid var(--input-border);
-    border-radius: 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     outline: none;
     font-size: 12px;
-    transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
   }
 
-  .input::placeholder { color: var(--input-placeholder); }
-  .input:focus { background: var(--surface); border-color: var(--input-focus-border); box-shadow: 0 0 0 3px var(--input-focus-ring); }
+  .input::placeholder { color: var(--text-tertiary); }
+  .input:focus {
+    background: var(--input-bg-focus);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
   .shortcut-hint { margin-top: 8px; }
   .save-btn { min-width: 66px; }
 
-  .presets-heading { margin-bottom: 11px; }
+  .presets-heading { margin-bottom: 12px; }
 
   .count-badge {
     display: grid;
@@ -778,23 +959,22 @@
     min-width: 26px;
     height: 26px;
     padding: 0 7px;
-    color: var(--count-text);
-    background: var(--count-surface);
-    border: 1px solid var(--count-border);
-    border-radius: 8px;
+    color: var(--text-secondary);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
 
   .empty-presets {
-    padding: 13px 0 1px;
+    padding: 14px 0 2px;
     border-top: 1px solid var(--divider);
   }
 
   .empty-presets p {
     margin: 0 0 4px;
-    color: var(--empty-text);
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 600;
   }
@@ -811,7 +991,7 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 0;
+    padding: 13px 0;
     border-bottom: 1px solid var(--divider);
   }
 
@@ -822,9 +1002,9 @@
     display: block;
     overflow: hidden;
     margin-bottom: 7px;
-    color: var(--preset-text);
+    color: var(--text-primary);
     font-size: 12px;
-    font-weight: 650;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -833,11 +1013,10 @@
 
   .size-chip {
     padding: 5px 7px;
-    color: var(--chip-text);
-    background: var(--chip-surface);
-    border: 1px solid var(--chip-border);
-    border-radius: 7px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text-secondary);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    font-family: "Switzer", ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 10px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -849,14 +1028,15 @@
     gap: 5px;
     flex: 0 0 auto;
     padding: 6px 7px;
-    color: var(--remove-muted);
+    color: var(--text-tertiary);
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
     font: inherit;
     font-size: 10px;
     cursor: pointer;
-    transition: color .16s ease, background .16s ease, border-color .16s ease;
+    transition: color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
   }
 
   .remove-btn svg { width: 14px; height: 14px; }
@@ -877,10 +1057,10 @@
     max-width: min(90vw, 460px);
     margin: 0 auto;
     padding: 11px 15px;
-    color: var(--toast-text);
+    color: var(--text-primary);
     background: var(--toast-surface);
     border: 1px solid var(--toast-border);
-    border-radius: 11px;
+    border-radius: var(--radius);
     box-shadow: var(--toast-shadow);
     font-size: 12px;
     line-height: 1.45;
@@ -889,7 +1069,8 @@
   .toast-msg { display: block; overflow-wrap: anywhere; }
 
   @media (max-width: 420px) {
-    .container { padding: 20px 15px 26px; }
+    .container { padding: 22px 16px 0; }
+    .content { padding-bottom: 28px; }
     .card { padding: 16px; }
     .subtitle { margin-left: 0; }
     .permission-card { align-items: flex-start; padding: 12px; }
@@ -905,11 +1086,4 @@
     .remove-btn { padding: 7px; }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .btn,
-    .theme-toggle,
-    .icon-btn,
-    .remove-btn,
-    .input { transition: none; }
-  }
 </style>

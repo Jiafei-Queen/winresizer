@@ -188,6 +188,8 @@
     margin: 0;
     padding: 0;
     background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
