@@ -125,7 +125,9 @@ func setupTray(app *application.App, window *application.WebviewWindow, svc *Res
 		window.Show()
 		window.Focus()
 	})
-	menu.Add("Record").OnClick(func(_ *application.Context) {
+	// Named for what it does, not for what it records: the console's own
+	// "Record" button records the tracked target without any picking.
+	menu.Add("Pick window…").OnClick(func(_ *application.Context) {
 		if err := svc.OpenOverlay(); err != nil {
 			log.Printf("overlay: %v", err)
 		}

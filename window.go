@@ -128,13 +128,20 @@ func (t *targetTracker) poll() {
 func (t *targetTracker) update(windows []windowctl.Window) {
 	for _, w := range windows {
 		if w.Focused && w.PID != t.self {
-			snap := w
-			t.mu.Lock()
-			t.target = &snap
-			t.mu.Unlock()
+			t.set(w)
 			return
 		}
 	}
+}
+
+// set pins the tracked target to w. Used after the overlay records a
+// window the user picked by hand, so the console's target card shows
+// what was just recorded instead of the auto-tracked one.
+func (t *targetTracker) set(w windowctl.Window) {
+	snap := w
+	t.mu.Lock()
+	t.target = &snap
+	t.mu.Unlock()
 }
 
 // get returns the tracked target snapshot, or ok=false when nothing has
@@ -309,6 +316,11 @@ func (s *ResizerService) CycleFocused() (string, error) {
 // window outside our own process. The UI acts on this instead of the
 // currently focused window (which is us whenever the user clicks our UI).
 func (s *ResizerService) GetTarget() (WindowInfo, error) {
+	// Poll synchronously first. This read happens exactly when focus
+	// returns to us, i.e. when "the window the user was just in" is the
+	// answer — and the background ticker can miss a fast
+	// A→B→WinResizer switch that lands inside one interval.
+	s.tracker.poll()
 	snap, ok := s.tracker.get()
 	if !ok {
 		return WindowInfo{}, fmt.Errorf("no target window yet — focus another app's window first")
@@ -339,7 +351,9 @@ func (s *ResizerService) ListWindows() ([]WindowInfo, error) {
 }
 
 // RecordWindow records the current size of the window with the given OS
-// window ID (from GetTarget or ListWindows).
+// window ID (from GetTarget or ListWindows). The recorded window also
+// becomes the tracked target: the user picked it deliberately, so the
+// console should keep acting on it until focus moves elsewhere.
 func (s *ResizerService) RecordWindow(id string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -347,7 +361,12 @@ func (s *ResizerService) RecordWindow(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.recordLocked(w)
+	msg, err := s.recordLocked(w)
+	if err != nil {
+		return "", err
+	}
+	s.tracker.set(w)
+	return msg, nil
 }
 
 // CycleWindow resizes the window with the given OS window ID to its

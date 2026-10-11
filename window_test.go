@@ -77,6 +77,50 @@ func TestTrackerEmptyInitially(t *testing.T) {
 	}
 }
 
+func TestTrackerSetOverwrites(t *testing.T) {
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return nil, nil }, 100, targetPollInterval)
+	defer tr.stopLoop()
+
+	// set() pins a target even though nothing was ever focused — this is
+	// how a window the user picked by hand becomes the target.
+	tr.set(windowctl.Window{ID: "7", App: "Preview", PID: 700})
+	got, ok := tr.get()
+	if !ok || got.ID != "7" {
+		t.Fatalf("get after set = %+v,%v, want ID=7,true", got, ok)
+	}
+
+	// A later poll still wins, so set() does not wedge the tracker.
+	tr.update([]windowctl.Window{{ID: "8", App: "Safari", PID: 800, Focused: true}})
+	got, ok = tr.get()
+	if !ok || got.ID != "8" {
+		t.Fatalf("get after poll = %+v,%v, want ID=8,true", got, ok)
+	}
+}
+
+// GetTarget must poll on read, not just serve the background ticker:
+// focus returning to the console is precisely when a switch the ticker
+// missed would still be the answer.
+func TestGetTargetPollsOnRead(t *testing.T) {
+	var live []windowctl.Window
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return live, nil }, 100, targetPollInterval)
+	defer tr.stopLoop()
+	svc := &ResizerService{tracker: tr}
+
+	live = []windowctl.Window{{ID: "1", App: "Safari", PID: 200, Focused: true}}
+	first, err := svc.GetTarget()
+	if err != nil || first.ID != "1" {
+		t.Fatalf("first GetTarget = %+v,%v, want ID=1,nil", first, err)
+	}
+
+	// A switch the background ticker never saw: the next read must
+	// still pick it up.
+	live = []windowctl.Window{{ID: "2", App: "Code", PID: 300, Focused: true}}
+	second, err := svc.GetTarget()
+	if err != nil || second.ID != "2" {
+		t.Fatalf("second GetTarget = %+v,%v, want ID=2,nil", second, err)
+	}
+}
+
 // Cycle/Record touch the live window manager, so they stay behind an
 // integration build tag. Run with: go test -tags integration
 // (requires Accessibility permission on macOS).

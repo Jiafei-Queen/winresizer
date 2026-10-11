@@ -74,6 +74,7 @@
 
   let maximised: boolean = $state(false);
   let maxSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  let focusSyncTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function syncMaximised(): Promise<void> {
     try {
@@ -125,18 +126,53 @@
     }
   }
 
-  async function refreshTarget(): Promise<void> {
+  // silent suppresses the toast. Focus-triggered refreshes run on every
+  // activation, so "no target yet" would otherwise flash an error at the
+  // user who has simply not visited another window yet.
+  async function refreshTarget(silent = false): Promise<void> {
     try {
       target = await ResizerService.GetTarget() as TargetWindow;
     } catch (e) {
       target = null;
-      showMessage(errText(e));
+      if (!silent) showMessage(errText(e));
     }
+  }
+
+  // Focus returning to the console is the signal to re-read everything:
+  // we are by definition the focused window now, so the tracker holds
+  // exactly the window the user wants to act on. Presets come along
+  // because the picker records behind our back and re-shows us.
+  async function syncOnFocus(): Promise<void> {
+    await refresh();
+    await refreshTarget(true);
+  }
+
+  // Showing from the tray fires both WindowShow and WindowFocus; collapse
+  // the pair into one round-trip.
+  function queueFocusSync(): void {
+    clearTimeout(focusSyncTimer);
+    focusSyncTimer = setTimeout(() => { void syncOnFocus(); }, 80);
+  }
+
+  function onSummaryKey(e: KeyboardEvent): void {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault(); // Space would otherwise scroll the console
+    void doPick();
   }
 
   async function doPick(): Promise<void> {
     try {
       await ResizerService.OpenOverlay();
+    } catch (e) {
+      showMessage(errText(e));
+    }
+  }
+
+  async function doRecord(): Promise<void> {
+    try {
+      showMessage(await ResizerService.RecordTarget());
+      await refresh();
+      await refreshTarget();
     } catch (e) {
       showMessage(errText(e));
     }
@@ -191,11 +227,14 @@
       Events.On('common:WindowUnMaximise', () => { maximised = false; }),
       Events.On('common:WindowRestore', () => { maximised = false; }),
       Events.On('common:WindowDidResize', queueMaximisedSync),
+      Events.On('common:WindowFocus', queueFocusSync),
+      Events.On('common:WindowShow', queueFocusSync),
     ];
 
     return () => {
       offs.forEach((off) => off());
       clearTimeout(maxSyncTimer);
+      clearTimeout(focusSyncTimer);
     };
   });
 
@@ -311,15 +350,22 @@
         <p class="eyebrow">Target window</p>
         <h2 id="active-window-title">Active target</h2>
       </div>
-      <button class="icon-btn" onclick={refreshTarget} aria-label="Refresh target window" title="Refresh target window">
-        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M16 8a6.1 6.1 0 0 0-10.5-2L4 7.5M4 4v3.5h3.5M4 12a6.1 6.1 0 0 0 10.5 2L16 12.5M16 16v-3.5h-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </button>
     </div>
 
-    {#if target}
-      <div class="window-summary">
+    <!-- The summary is the "pick a window" entry point: the card shows
+         what the auto-tracker picked, clicking it opens the picker when
+         that is not the window the user meant. -->
+    <div
+      class="window-summary"
+      class:empty-window={!target}
+      role="button"
+      tabindex="0"
+      aria-label="Pick a window to record"
+      title="Pick a window to record"
+      onclick={doPick}
+      onkeydown={onSummaryKey}
+    >
+      {#if target}
         <div class="window-overview">
           <div class="window-glyph" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none">
@@ -343,9 +389,8 @@
           <span>{target.h}</span>
           <small>px</small>
         </p>
-      </div>
-    {:else}
-      <div class="window-summary empty-window">
+        <p class="summary-hint">Click to pick a different window</p>
+      {:else}
         <div class="window-glyph" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
             <rect x="3.5" y="4" width="17" height="16" stroke="currentColor" stroke-width="1.6" />
@@ -356,17 +401,17 @@
         </div>
         <div>
           <strong>No target window yet</strong>
-          <p>Focus another app's window first, then refresh.</p>
+          <p>Click to pick a window, or focus another app and come back.</p>
         </div>
-      </div>
-    {/if}
+      {/if}
+    </div>
 
     <div class="row action-row">
-      <button class="btn primary" onclick={doPick}>
+      <button class="btn primary" onclick={doRecord} disabled={!target}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+          <path d="M5.5 3.5h9v13l-4.5-3.2-4.5 3.2v-13Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
         </svg>
-        Pick window…
+        Record
       </button>
       <button class="btn secondary" onclick={doCycle}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -702,37 +747,20 @@
 
   .focus-heading { margin-bottom: 14px; }
 
-  .icon-btn {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    flex: 0 0 auto;
-    padding: 0;
-    color: var(--text-secondary);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    cursor: pointer;
-    transition: color var(--duration-fast) var(--ease-out),
-                background var(--duration-fast) var(--ease-out),
-                border-color var(--duration-fast) var(--ease-out);
-  }
-
-  .icon-btn:hover {
-    color: var(--accent);
-    background: var(--surface-raised);
-    border-color: var(--border-strong);
-  }
-
-  .icon-btn svg { width: 18px; height: 18px; }
-
   .window-summary {
     min-width: 0;
     margin-bottom: 16px;
     padding: 16px;
     background: var(--surface-subtle);
     border: 1px solid var(--border);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
+  }
+
+  .window-summary:hover {
+    background: var(--surface-raised);
+    border-color: var(--border-strong);
   }
 
   .window-overview {
@@ -815,6 +843,12 @@
     letter-spacing: 0;
   }
 
+  .summary-hint {
+    margin: 12px 0 0;
+    color: var(--text-tertiary);
+    font-size: 11px;
+  }
+
   .empty-window {
     display: flex;
     align-items: center;
@@ -866,6 +900,14 @@
   .btn:active { transform: scale(0.98); }
   .btn svg { width: 16px; height: 16px; flex: 0 0 auto; }
 
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn:disabled:hover { background: var(--accent); }
+  .btn:disabled:active { transform: none; }
+
   .btn.secondary,
   .btn.save-btn {
     color: var(--text-primary);
@@ -895,7 +937,7 @@
   }
 
   .btn:focus-visible,
-  .icon-btn:focus-visible,
+  .window-summary:focus-visible,
   .remove-btn:focus-visible,
   .theme-toggle:focus-visible {
     outline: 2px solid var(--focus-ring);
