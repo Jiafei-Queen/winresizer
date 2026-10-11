@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "mcp": {
+    "servers": {
+      // $ npm i -g open-computer-use
+      // $ npx skills add iFurySt/open-codex-computer-use -g -a opencode --skill open-computer-use -y
+      "open-computer-use": {
+        "type": "local",
+        "command": ["open-computer-use", "mcp"]
+      },
+      "chrome-devtools": {
+        "type": "local",
+        "command": ["npx", "-y", "chrome-devtools-mcp@latest"]
+      }
+    }
+  }
+}
