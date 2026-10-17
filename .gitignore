@@ -18,24 +18,11 @@ coverage.html
 /frontend/dist/
 /frontend/bindings/
 
-# Generated icons (regenerated from build/appicon.png + build/appicon.icon)
-/build/darwin/icons.icns
-/build/darwin/Assets.car
-/build/windows/icon.ico
+/build
 
-# Generated iOS Xcode project/overlay (wails3 ios overlay:gen)
-/build/ios/xcode/
+/build/linux/appimage
+/build/linux/*.desktop
 
-# Generated Android overlay (wails3 android overlay:gen)
-/build/android/overlay.json
-/build/android/gen/
-
-# Android Gradle/NDK outputs
-/build/android/.gradle/
-/build/android/build/
-/build/android/app/build/
-/build/android/app/.cxx/
-/build/android/local.properties
 *.apk
 *.aab
 
