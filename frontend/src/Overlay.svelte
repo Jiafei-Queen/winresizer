@@ -209,7 +209,10 @@
   <!-- Hidden once the result lands: the overlay stays open for a beat after
        Record, and both panels at once stacked two surfaces on the desktop. -->
   {#if selected && !message}
-    <div class="confirm" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Confirm record">
+    <!-- No click handler here: the root handler already bails out while a
+         selection is live ("confirm bar handles its own buttons").
+         tabindex=-1 satisfies the dialog role without adding a tab stop. -->
+    <div class="confirm" role="dialog" tabindex="-1" aria-label="Confirm record">
       <div class="confirm-glyph" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none">
           <rect x="3.5" y="4" width="17" height="16" stroke="currentColor" stroke-width="1.6" />
