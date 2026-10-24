@@ -59,6 +59,36 @@ func main() {
 		},
 	})
 
+	// Wire the app into the service; the console window itself is created
+	// lazily on first show (see showConsole). Creation, the Wayland
+	// client-side decoration prep, and the first Show then always run back
+	// to back, so a system title bar never gets the chance to appear over
+	// the console's own — and a tray-only startup (production, not first
+	// run) never builds the console webview at all.
+	svc.app = app
+
+	setupTray(app, svc)
+	registerHotkey(app, svc, cfg.Hotkey)
+
+	// Show the console on first run so the user discovers the app; dev
+	// builds always show it (see buildmode_dev.go / buildmode_production.go).
+	// Every later start stays quietly in the tray until opened.
+	if firstRun || devBuild {
+		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
+			svc.showConsole()
+		})
+	}
+
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// createConsoleWindow builds the console window. It is always created
+// hidden — showConsole owns every show, which is what leaves room for the
+// Wayland decoration prep before the first one — and closing it hides it
+// instead of quitting the app.
+func createConsoleWindow(app *application.App) *application.WebviewWindow {
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "WinResizer Console",
 		Width:  520,
@@ -87,33 +117,17 @@ func main() {
 			// edge to edge underneath it. The native traffic lights remain.
 			TitleBar: application.MacTitleBarHidden,
 		},
-		// Production: show once on first run so the user discovers the app;
-		// afterwards it starts quietly in the tray. Dev builds always show
-		// the window (see buildmode_dev.go / buildmode_production.go).
-		Hidden: !(firstRun || devBuild),
+		Hidden: true,
 		URL:    "/",
 	})
-
-	// Closing the console window hides it instead of quitting the app.
 	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		window.Hide()
 		e.Cancel()
 	})
-
-	// Wire window handles into the service for overlay management.
-	// Same package, so these stay unexported and out of the JS bindings.
-	svc.app = app
-	svc.console = window
-
-	setupTray(app, window, svc)
-	registerHotkey(app, svc, cfg.Hotkey)
-
-	if err := app.Run(); err != nil {
-		log.Fatal(err)
-	}
+	return window
 }
 
-func setupTray(app *application.App, window *application.WebviewWindow, svc *ResizerService) {
+func setupTray(app *application.App, svc *ResizerService) {
 	tray := app.SystemTray.New()
 	if runtime.GOOS == "darwin" {
 		tray.SetTemplateIcon(icons.SystrayMacTemplate)
@@ -122,8 +136,7 @@ func setupTray(app *application.App, window *application.WebviewWindow, svc *Res
 
 	menu := app.NewMenu()
 	menu.Add("Console").OnClick(func(_ *application.Context) {
-		window.Show()
-		window.Focus()
+		svc.showConsole()
 	})
 	// Named for what it does, not for what it records: the console's own
 	// "Record" button records the tracked target without any picking.
@@ -139,8 +152,7 @@ func setupTray(app *application.App, window *application.WebviewWindow, svc *Res
 	tray.SetMenu(menu)
 
 	tray.OnClick(func() {
-		window.Show()
-		window.Focus()
+		svc.showConsole()
 	})
 }
 

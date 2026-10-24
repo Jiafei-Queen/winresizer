@@ -229,7 +229,7 @@ func snapBackTarget(a *overlayAnchor, curX, curY int) (x, y int, ok bool) {
 func (s *ResizerService) OpenOverlay() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.app == nil || s.console == nil {
+	if s.app == nil {
 		return fmt.Errorf("app not initialised")
 	}
 	monitors, err := windowctl.ListMonitors()
@@ -301,7 +301,8 @@ func (s *ResizerService) OpenOverlay() error {
 		s.overlay.SetPosition(p.X, p.Y)
 		s.overlay.SetSize(p.W, p.H)
 	}
-	s.consoleWasVisible = s.console.IsVisible()
+	// The console may not exist yet (lazy creation); nothing to hide then.
+	s.consoleWasVisible = s.console != nil && s.console.IsVisible()
 	if s.consoleWasVisible {
 		s.console.Hide()
 	}
@@ -309,6 +310,10 @@ func (s *ResizerService) OpenOverlay() error {
 	// a cgo shim (overlay_pin_darwin.m) that calls setMovable:NO — cheap
 	// and idempotent, so run it on every open.
 	pinOverlayWindow(overlayWindowTitle)
+	// Same Wayland fix as the console (see prepClientDecorations): prep
+	// before the first map so a system title bar never appears over the
+	// picker either.
+	prepClientDecorations(s.overlay)
 	s.overlay.Show()
 	s.overlay.Focus()
 	// macOS may have clamped the frame (menu bar clamp): read back where
@@ -329,13 +334,16 @@ func (s *ResizerService) OpenOverlay() error {
 // visible when the overlay opened.
 func (s *ResizerService) CloseOverlay() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.overlay != nil {
-		s.overlay.Hide()
+	overlay := s.overlay
+	restore := s.consoleWasVisible
+	s.consoleWasVisible = false
+	if overlay != nil {
+		overlay.Hide()
 	}
-	if s.consoleWasVisible && s.console != nil {
-		s.console.Show()
-		s.console.Focus()
-		s.consoleWasVisible = false
+	s.mu.Unlock()
+	// showConsole takes the service lock itself (it may create the
+	// console), so it must run after the unlock above.
+	if restore {
+		s.showConsole()
 	}
 }

@@ -281,6 +281,26 @@ func (s *ResizerService) notifyPresetsChanged() {
 	s.console.EmitEvent("presets-changed")
 }
 
+// showConsole raises the console window, creating it on first use (see
+// createConsoleWindow). Creation, the Wayland client-side decoration prep
+// and the first Show always run back to back here, which is what keeps
+// compositors from ever drawing a system title bar over the console's
+// own (see prepClientDecorations). Reached from the tray, the overlay
+// close, and the first-run startup show in main.go.
+func (s *ResizerService) showConsole() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.app == nil {
+		return
+	}
+	if s.console == nil {
+		s.console = createConsoleWindow(s.app)
+		prepClientDecorations(s.console)
+	}
+	s.console.Show()
+	s.console.Focus()
+}
+
 // cycleLocked resizes w to its app's next recorded size. Caller must hold s.mu.
 func (s *ResizerService) cycleLocked(w windowctl.Window) (string, error) {
 	if strings.TrimSpace(w.App) == "" {
