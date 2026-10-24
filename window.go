@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/muthuishere/windowctl"
+	"github.com/Jiafei-Queen/windowctl"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/muthuishere/windowctl"
+	"github.com/Jiafei-Queen/windowctl"
 )
 
 func TestOverlaySingleMonitor(t *testing.T) {
