@@ -163,7 +163,7 @@ func (s *ResizerService) GetOverlayData() (OverlayData, error) {
 	if err != nil {
 		return OverlayData{}, fmt.Errorf("list monitors: %w", err)
 	}
-	windows, err := windowctl.ListWindows(windowctl.Filter{})
+	windows, err := currentDesktopWindows()
 	if err != nil {
 		return OverlayData{}, fmt.Errorf("list windows: %w", err)
 	}
@@ -236,7 +236,7 @@ func (s *ResizerService) OpenOverlay() error {
 	if err != nil {
 		return fmt.Errorf("list monitors: %w", err)
 	}
-	windows, err := windowctl.ListWindows(windowctl.Filter{})
+	windows, err := currentDesktopWindows()
 	if err != nil {
 		return fmt.Errorf("list windows: %w", err)
 	}

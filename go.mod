@@ -3,7 +3,7 @@ module winresizer
 go 1.25.0
 
 require (
-	github.com/Jiafei-Queen/windowctl v0.0.0-20261018092020-7faf0d4f9aa4
+	github.com/Jiafei-Queen/windowctl v0.6.0
 	github.com/wailsapp/wails/v3 v3.0.0-beta.28
 )
 

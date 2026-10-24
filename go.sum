@@ -1,5 +1,5 @@
-github.com/Jiafei-Queen/windowctl v0.0.0-20261018092020-7faf0d4f9aa4 h1:0yhWXIUcJ2MwGyz6nXG7rMkDsarxr+aBuLsHAqq61c4=
-github.com/Jiafei-Queen/windowctl v0.0.0-20261018092020-7faf0d4f9aa4/go.mod h1:yajG0++TMEgEm/iGDR2TVkeqzsBR9Cd50pcXPdN7b/A=
+github.com/Jiafei-Queen/windowctl v0.6.0 h1:LMKxQTNSEj7ZrtmzaGU+huyK8CgLh1dy9e0G0JaeX3A=
+github.com/Jiafei-Queen/windowctl v0.6.0/go.mod h1:yajG0++TMEgEm/iGDR2TVkeqzsBR9Cd50pcXPdN7b/A=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
 github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=

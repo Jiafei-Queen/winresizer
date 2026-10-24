@@ -42,10 +42,17 @@ func normalizeAppID(appName string) string {
 	return strings.ToLower(strings.TrimSpace(appName))
 }
 
+// currentDesktopWindows lists windows on the user's current virtual
+// desktop/Space. The picker, focused-window and tracker paths only act
+// on what the user can see right now.
+func currentDesktopWindows() ([]windowctl.Window, error) {
+	return windowctl.ListWindows(windowctl.Filter{CurrentDesktopOnly: true})
+}
+
 // focusedWindow returns the frontmost window. windowctl stamps Focused on
 // the topmost window of the focused monitor.
 func focusedWindow() (windowctl.Window, error) {
-	windows, err := windowctl.ListWindows(windowctl.Filter{})
+	windows, err := currentDesktopWindows()
 	if err != nil {
 		return windowctl.Window{}, fmt.Errorf("list windows: %w", err)
 	}
@@ -79,7 +86,7 @@ func toWindowInfo(w windowctl.Window) WindowInfo {
 type listWindowsFunc func() ([]windowctl.Window, error)
 
 func liveListWindows() ([]windowctl.Window, error) {
-	return windowctl.ListWindows(windowctl.Filter{})
+	return currentDesktopWindows()
 }
 
 // targetTracker remembers the most recently focused window that does NOT
@@ -234,6 +241,9 @@ func findWindowByID(id string) (windowctl.Window, error) {
 	if strings.TrimSpace(id) == "" {
 		return windowctl.Window{}, fmt.Errorf("empty window id")
 	}
+	// Deliberately unfiltered: the user may switch desktops between
+	// picking a window and acting on it, and windowctl.Resize matches
+	// across all desktops.
 	windows, err := windowctl.ListWindows(windowctl.Filter{})
 	if err != nil {
 		return windowctl.Window{}, fmt.Errorf("list windows: %w", err)
@@ -376,10 +386,11 @@ func (s *ResizerService) GetTarget() (WindowInfo, error) {
 	return info, nil
 }
 
-// ListWindows returns all windows for the manual selector. Our own
-// settings window is flagged via Self so the UI can grey it out.
+// ListWindows returns the current desktop's windows for the manual
+// selector. Our own settings window is flagged via Self so the UI can
+// grey it out.
 func (s *ResizerService) ListWindows() ([]WindowInfo, error) {
-	windows, err := windowctl.ListWindows(windowctl.Filter{})
+	windows, err := currentDesktopWindows()
 	if err != nil {
 		return nil, fmt.Errorf("list windows: %w", err)
 	}
