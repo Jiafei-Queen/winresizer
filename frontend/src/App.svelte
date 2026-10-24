@@ -229,6 +229,10 @@
       Events.On('common:WindowDidResize', queueMaximisedSync),
       Events.On('common:WindowFocus', queueFocusSync),
       Events.On('common:WindowShow', queueFocusSync),
+      // The backend pokes us after records made outside this window
+      // (picker, hotkey): on Linux the GTK3 backend never forwards
+      // focus-in, so the handlers above would never fire after a pick.
+      Events.On('presets-changed', () => { void syncOnFocus(); }),
     ];
 
     return () => {

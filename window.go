@@ -260,10 +260,25 @@ func (s *ResizerService) recordLocked(w windowctl.Window) (string, error) {
 	if err := s.cfg.Save(); err != nil {
 		return "", err
 	}
+	// The record may have happened behind the console's back (picker,
+	// hotkey), so poke its page to re-read state — see notifyPresetsChanged.
+	s.notifyPresetsChanged()
 	if isNew {
 		return fmt.Sprintf("Recorded %dx%d for %s (preset #%d of %d)", w.Bounds.W, w.Bounds.H, w.App, len(p.Sizes), len(p.Sizes)), nil
 	}
 	return fmt.Sprintf("%dx%d already recorded for %s", w.Bounds.W, w.Bounds.H, w.App), nil
+}
+
+// notifyPresetsChanged pokes the console page that presets were written
+// behind its back. The console re-reads state when focus returns to it, but
+// Wails' GTK3 backend never forwards focus-in on Linux, so records made
+// outside the console (picker, hotkey) would leave the Presets list stale
+// until a manual reload. Harmless duplicate refresh where focus events work.
+func (s *ResizerService) notifyPresetsChanged() {
+	if s.console == nil {
+		return
+	}
+	s.console.EmitEvent("presets-changed")
 }
 
 // cycleLocked resizes w to its app's next recorded size. Caller must hold s.mu.

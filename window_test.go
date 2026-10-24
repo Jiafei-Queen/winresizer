@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Jiafei-Queen/windowctl"
@@ -145,6 +146,45 @@ func TestGetTargetFlagsRecordedSize(t *testing.T) {
 	}
 	if !got.IsRecorded {
 		t.Fatal("IsRecorded = false for a saved 800x600, want true")
+	}
+}
+
+// recordLocked is the one write path every record entry point shares. It
+// must persist the size, report a duplicate instead of re-recording, and
+// stay usable before a console window is wired (notifyPresetsChanged is a
+// no-op then).
+func TestRecordLocked(t *testing.T) {
+	t.Setenv("WINRESIZER_CONFIG", t.TempDir()+"/config.json")
+	cfg, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	svc := &ResizerService{cfg: cfg}
+
+	w := windowctl.Window{App: "Safari"}
+	w.Bounds.W, w.Bounds.H = 800, 600
+	if _, err := svc.recordLocked(w); err != nil {
+		t.Fatalf("recordLocked: %v", err)
+	}
+	p := cfg.Find("safari")
+	if p == nil || len(p.Sizes) != 1 || p.Sizes[0] != (Size{W: 800, H: 600}) {
+		t.Fatalf("preset after record = %+v", p)
+	}
+	msg, err := svc.recordLocked(w)
+	if err != nil {
+		t.Fatalf("duplicate recordLocked: %v", err)
+	}
+	if !strings.Contains(msg, "already recorded") {
+		t.Fatalf("duplicate message = %q, want it to report an already recorded size", msg)
+	}
+
+	// The write survives a reload.
+	re, _, err := Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := re.Find("safari"); got == nil || len(got.Sizes) != 1 {
+		t.Fatalf("preset after reload = %+v", got)
 	}
 }
 
