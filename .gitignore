@@ -18,8 +18,8 @@ coverage.html
 /frontend/dist/
 /frontend/bindings/
 
-/build
-
+/build/darwin/*.icns
+/build/windows/*.ico
 /build/linux/appimage
 /build/linux/*.desktop
 
