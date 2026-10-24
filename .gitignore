@@ -23,6 +23,8 @@ coverage.html
 /build/linux/appimage
 /build/linux/*.desktop
 
+/tmp
+
 *.apk
 *.aab
 
