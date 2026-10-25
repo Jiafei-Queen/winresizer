@@ -183,9 +183,62 @@ tasks:
       CATEGORIES: 'Development;'
       OUTPUTFILE: '{{.ROOT_DIR}}/build/linux/{{.APP_NAME}}.desktop'
 
-  run:
+  install:desktop:
+    summary: Installs the generated .desktop file for the Wayland portal app id
+    internal: true
+    deps:
+      - task: generate:dotdesktop
     cmds:
-      - '{{.BIN_DIR}}/{{.APP_NAME}}'
+      # The XDG portal resolves a host app's id from a .desktop file with the
+      # same basename. Packages install it system-wide; dev checkouts may not
+      # have it, so install the generated file for the current user.
+      #
+      # The user copy wins over the system one in the XDG lookup order, so a
+      # stale copy from an earlier dev run would shadow the packaged file
+      # forever. Always refresh it here, and drop it once a package is
+      # installed system-wide.
+      - |
+        if [ "{{.INSTALL_DESKTOP | default "true"}}" != "true" ]; then
+          exit 0
+        fi
+        dest="$HOME/.local/share/applications/{{.APP_NAME}}.desktop"
+        if [ -f "/usr/share/applications/{{.APP_NAME}}.desktop" ]; then
+          rm -f "$dest"
+          exit 0
+        fi
+        mkdir -p "$(dirname "$dest")"
+        cp "{{.ROOT_DIR}}/build/linux/{{.APP_NAME}}.desktop" "$dest"
+        if command -v update-desktop-database >/dev/null 2>&1; then
+          update-desktop-database "$(dirname "$dest")" >/dev/null 2>&1 || true
+        fi
+
+  run:
+    summary: Runs the application
+    desc: |
+      On Wayland the XDG portal identifies the caller by its systemd cgroup
+      unit name (app-<AppID>-<random>.scope). A dev build started from a
+      terminal would otherwise inherit the terminal's scope (for example
+      app-org.kde.konsole-*.scope), so the global shortcut would be registered
+      for the terminal instead of winresizer. Running under our own scope
+      gives the app the same portal identity as a launcher-started build.
+    deps:
+      - task: install:desktop
+        vars:
+          INSTALL_DESKTOP: '{{.INSTALL_DESKTOP | default "true"}}'
+    cmds:
+      - |
+        if [ "{{.USE_PORTAL_SCOPE}}" = "true" ]; then
+          exec systemd-run --user --scope --unit="app-{{.APP_NAME}}-{{.RUN_ID}}" --collect "{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}"
+        fi
+        exec "{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}"
+    vars:
+      RUN_ID:
+        sh: 'date +%s%N'
+      USE_PORTAL_SCOPE:
+        sh: 'if { [ "${XDG_SESSION_TYPE:-}" = wayland ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope --unit="app-{{.APP_NAME}}-probe-$(date +%s%N)" --collect true >/dev/null 2>&1; then echo true; else echo false; fi'
+      # INSTALL_DESKTOP=false skips the user-local .desktop file, for
+      # anyone who does not want the task writing to their home directory.
+      INSTALL_DESKTOP: '{{.INSTALL_DESKTOP | default "true"}}'
 
   sign:deb:
     summary: Signs the DEB package
