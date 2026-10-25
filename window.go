@@ -95,12 +95,13 @@ func liveListWindows() ([]windowctl.Window, error) {
 // the UI — the tracker lets the UI act on the window the user was in
 // just before they clicked us.
 type targetTracker struct {
-	mu     sync.Mutex
-	self   int
-	list   listWindowsFunc
-	target *windowctl.Window
-	stop   chan struct{}
-	done   chan struct{}
+	mu       sync.Mutex
+	self     int
+	list     listWindowsFunc
+	target   *windowctl.Window
+	onChange func()
+	stop     chan struct{}
+	done     chan struct{}
 }
 
 func newTargetTracker(list listWindowsFunc, selfPID int, interval time.Duration) *targetTracker {
@@ -124,34 +125,94 @@ func (t *targetTracker) loop(interval time.Duration) {
 	}
 }
 
+// poll refreshes the snapshot from the window list and announces a
+// changed target to onChange. This is the background ticker: it is the
+// only path allowed to wake the console, because nothing else tells it
+// that the user moved on to another window.
 func (t *targetTracker) poll() {
+	t.pollWith(true)
+}
+
+// pollQuiet refreshes the snapshot without announcing anything. The
+// read path (GetTarget) uses it: that caller receives the fresh
+// snapshot in its response anyway, so an announcement would only make
+// the console read the very same target all over again — and again, as
+// long as the target keeps changing.
+func (t *targetTracker) pollQuiet() {
+	t.pollWith(false)
+}
+
+func (t *targetTracker) pollWith(notify bool) {
 	windows, err := t.list()
 	if err != nil {
 		return
 	}
-	t.update(windows)
+	t.update(windows, notify)
 }
 
 // update records the focused external window, if any. When nothing
 // external is focused (e.g. our own settings window has focus, or the
-// desktop does), the previous target is kept.
-func (t *targetTracker) update(windows []windowctl.Window) {
+// desktop does), the previous target is kept. notify tells onChange
+// about a changed target.
+func (t *targetTracker) update(windows []windowctl.Window, notify bool) {
 	for _, w := range windows {
 		if w.Focused && w.PID != t.self {
-			t.set(w)
+			t.store(w, notify)
 			return
 		}
 	}
 }
 
-// set pins the tracked target to w. Used after the overlay records a
-// window the user picked by hand, so the console's target card shows
-// what was just recorded instead of the auto-tracked one.
+// set pins the tracked target to w and announces a changed target. Used
+// after the overlay records a window the user picked by hand, so the
+// console's target card shows what was just recorded instead of the
+// auto-tracked one.
 func (t *targetTracker) set(w windowctl.Window) {
+	t.store(w, true)
+}
+
+// store writes the snapshot and, when the snapshot actually differs
+// from the previous one, tells onChange that the tracked target
+// changed. The poller re-reads the same window every tick, so the
+// comparison is what keeps a steady target from waking the console on
+// every tick.
+func (t *targetTracker) store(w windowctl.Window, notify bool) {
 	snap := w
 	t.mu.Lock()
+	prev := t.target
+	changed := prev == nil || !sameTarget(*prev, snap)
 	t.target = &snap
+	onChange := t.onChange
 	t.mu.Unlock()
+	// Run the callback outside the lock: it emits a UI event, and set is
+	// also called from service methods that already hold s.mu.
+	if changed && notify && onChange != nil {
+		onChange()
+	}
+}
+
+// setOnChange installs the callback run whenever the tracked target
+// changes. Callbacks must not acquire the service lock: set can be
+// called while that lock is held.
+func (t *targetTracker) setOnChange(fn func()) {
+	t.mu.Lock()
+	t.onChange = fn
+	t.mu.Unlock()
+}
+
+// sameTarget reports whether two snapshots describe the same target
+// state. ID identifies the window; the remaining fields catch in-place
+// changes (manual resize, retitle) the UI should re-read. The position
+// is left out on purpose: the console shows the size, not the
+// coordinates, so a window that only moved is not a change worth a
+// round-trip.
+func sameTarget(a, b windowctl.Window) bool {
+	return a.ID == b.ID &&
+		a.App == b.App &&
+		a.Title == b.Title &&
+		a.Monitor == b.Monitor &&
+		a.Bounds.W == b.Bounds.W &&
+		a.Bounds.H == b.Bounds.H
 }
 
 // get returns the tracked target snapshot, or ok=false when nothing has
@@ -306,6 +367,18 @@ func (s *ResizerService) showConsole() {
 	if s.console == nil {
 		s.console = createConsoleWindow(s.app)
 		prepClientDecorations(s.console)
+		// Push target changes to the console instead of waiting for a
+		// focus event: Wails' GTK3 backend never forwards focus-in on
+		// Linux (only focus-out is connected), so refocusing an already
+		// visible console would otherwise leave its target card stale.
+		// Capture the pointer here so the callback never reads s.console
+		// off the service lock.
+		if s.tracker != nil {
+			console := s.console
+			s.tracker.setOnChange(func() {
+				console.EmitEvent("target-changed")
+			})
+		}
 	}
 	s.console.Show()
 	s.console.Focus()
@@ -364,11 +437,14 @@ func (s *ResizerService) CycleFocused() (string, error) {
 // window outside our own process. The UI acts on this instead of the
 // currently focused window (which is us whenever the user clicks our UI).
 func (s *ResizerService) GetTarget() (WindowInfo, error) {
-	// Poll synchronously first. This read happens exactly when focus
-	// returns to us, i.e. when "the window the user was just in" is the
-	// answer — and the background ticker can miss a fast
-	// A→B→WinResizer switch that lands inside one interval.
-	s.tracker.poll()
+	// Poll synchronously first, but silently. This read happens exactly
+	// when focus returns to us, i.e. when "the window the user was just
+	// in" is the answer — and the background ticker can miss a fast
+	// A→B→WinResizer switch that lands inside one interval. The poll
+	// must not announce the change: this response already carries the
+	// fresh target, and announcing it would make the console read it
+	// again — and again, for as long as the target keeps changing.
+	s.tracker.pollQuiet()
 	snap, ok := s.tracker.get()
 	if !ok {
 		return WindowInfo{}, fmt.Errorf("no target window yet — focus another app's window first")

@@ -74,7 +74,8 @@
 
   let maximised: boolean = $state(false);
   let maxSyncTimer: ReturnType<typeof setTimeout> | undefined;
-  let focusSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  let syncTimer: ReturnType<typeof setTimeout> | undefined;
+  let syncFull: boolean = false;
 
   async function syncMaximised(): Promise<void> {
     try {
@@ -138,20 +139,32 @@
     }
   }
 
-  // Focus returning to the console is the signal to re-read everything:
-  // we are by definition the focused window now, so the tracker holds
-  // exactly the window the user wants to act on. Presets come along
-  // because the picker records behind our back and re-shows us.
-  async function syncOnFocus(): Promise<void> {
+  // Re-read everything the console shows: the config, the presets and
+  // the tracked target. Focus returning to the console is the signal to
+  // re-read: we are by definition the focused window now, so the
+  // tracker holds exactly the window the user wants to act on.
+  async function syncAll(): Promise<void> {
     await refresh();
     await refreshTarget(true);
   }
 
-  // Showing from the tray fires both WindowShow and WindowFocus; collapse
-  // the pair into one round-trip.
-  function queueFocusSync(): void {
-    clearTimeout(focusSyncTimer);
-    focusSyncTimer = setTimeout(() => { void syncOnFocus(); }, 80);
+  // One debounce for every push the backend sends. A record changes the
+  // presets and the tracked target at once, and two timers would answer
+  // that with two round-trips. full marks the pushes that also need the
+  // config re-read (presets, focus); a plain target change only moves
+  // the target card.
+  function queueSync(full: boolean): void {
+    syncFull = syncFull || full;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      const withConfig = syncFull;
+      syncFull = false;
+      if (withConfig) {
+        void syncAll();
+      } else {
+        void refreshTarget(true);
+      }
+    }, 80);
   }
 
   function onSummaryKey(e: KeyboardEvent): void {
@@ -227,18 +240,24 @@
       Events.On('common:WindowUnMaximise', () => { maximised = false; }),
       Events.On('common:WindowRestore', () => { maximised = false; }),
       Events.On('common:WindowDidResize', queueMaximisedSync),
-      Events.On('common:WindowFocus', queueFocusSync),
-      Events.On('common:WindowShow', queueFocusSync),
+      // Showing from the tray fires both WindowShow and WindowFocus;
+      // the shared debounce collapses the pair into one round-trip.
+      Events.On('common:WindowFocus', () => { queueSync(true); }),
+      Events.On('common:WindowShow', () => { queueSync(true); }),
+      // The backend pushes this when the tracked target changes, so the
+      // card stays current without a focus-in event (Linux GTK3 never
+      // forwards one).
+      Events.On('target-changed', () => { queueSync(false); }),
       // The backend pokes us after records made outside this window
       // (picker, hotkey): on Linux the GTK3 backend never forwards
       // focus-in, so the handlers above would never fire after a pick.
-      Events.On('presets-changed', () => { void syncOnFocus(); }),
+      Events.On('presets-changed', () => { queueSync(true); }),
     ];
 
     return () => {
       offs.forEach((off) => off());
       clearTimeout(maxSyncTimer);
-      clearTimeout(focusSyncTimer);
+      clearTimeout(syncTimer);
     };
   });
 

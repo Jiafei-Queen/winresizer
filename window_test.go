@@ -2,7 +2,9 @@ package main
 
 import (
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Jiafei-Queen/windowctl"
 )
@@ -48,21 +50,21 @@ func TestTrackerIgnoresSelf(t *testing.T) {
 	defer tr.stopLoop()
 
 	ext := windowctl.Window{ID: "1", App: "Safari", PID: 200, Focused: true}
-	tr.update([]windowctl.Window{ext})
+	tr.update([]windowctl.Window{ext}, true)
 	if got, ok := tr.get(); !ok || got.ID != "1" {
 		t.Fatalf("get = %+v,%v, want ID=1,true", got, ok)
 	}
 
 	// Only our own window focused: target must stay on the external one.
 	own := windowctl.Window{ID: "2", App: "WinResizer", PID: self, Focused: true}
-	tr.update([]windowctl.Window{own})
+	tr.update([]windowctl.Window{own}, true)
 	if got, ok := tr.get(); !ok || got.ID != "1" {
 		t.Fatalf("get after self-focus = %+v,%v, want ID=1,true", got, ok)
 	}
 
 	// A newer external focus replaces the target.
 	ext2 := windowctl.Window{ID: "3", App: "Code", PID: 300, Focused: true}
-	tr.update([]windowctl.Window{own, ext2})
+	tr.update([]windowctl.Window{own, ext2}, true)
 	if got, ok := tr.get(); !ok || got.ID != "3" {
 		t.Fatalf("get after switch = %+v,%v, want ID=3,true", got, ok)
 	}
@@ -72,7 +74,7 @@ func TestTrackerEmptyInitially(t *testing.T) {
 	tr := newTargetTracker(func() ([]windowctl.Window, error) { return nil, nil }, 100, targetPollInterval)
 	defer tr.stopLoop()
 	// No focused external window seen: no target.
-	tr.update([]windowctl.Window{{ID: "9", App: "X", PID: 200}})
+	tr.update([]windowctl.Window{{ID: "9", App: "X", PID: 200}}, true)
 	if _, ok := tr.get(); ok {
 		t.Fatal("get should report ok=false before any external focus")
 	}
@@ -91,10 +93,130 @@ func TestTrackerSetOverwrites(t *testing.T) {
 	}
 
 	// A later poll still wins, so set() does not wedge the tracker.
-	tr.update([]windowctl.Window{{ID: "8", App: "Safari", PID: 800, Focused: true}})
+	tr.update([]windowctl.Window{{ID: "8", App: "Safari", PID: 800, Focused: true}}, true)
 	got, ok = tr.get()
 	if !ok || got.ID != "8" {
 		t.Fatalf("get after poll = %+v,%v, want ID=8,true", got, ok)
+	}
+}
+
+// The UI refresh path relies on the tracker announcing changes: Linux's
+// Wails GTK3 backend never forwards focus-in, so the console cannot count
+// on a focus event to re-read GetTarget. set() must announce a new
+// target or an in-place change, but not every identical poll.
+func TestTrackerNotifiesOnTargetChange(t *testing.T) {
+	// The list func returns no windows, so the background ticker never
+	// stores anything and the calls below are the only writer. The mutex
+	// keeps the counter safe should that ever change.
+	var (
+		mu        sync.Mutex
+		announced int
+	)
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return nil, nil }, 100, targetPollInterval)
+	defer tr.stopLoop()
+
+	tr.setOnChange(func() {
+		mu.Lock()
+		announced++
+		mu.Unlock()
+	})
+
+	base := windowctl.Window{ID: "1", App: "Safari", PID: 200, Focused: true}
+	base.Bounds.W, base.Bounds.H = 800, 600
+	tr.set(base)
+	tr.set(base) // identical poll snapshot: no announcement
+
+	resized := base
+	resized.Bounds.W = 900
+	tr.set(resized) // same window, new bounds: announcement
+
+	tr.set(windowctl.Window{ID: "2", App: "Code", PID: 300, Focused: true})
+
+	mu.Lock()
+	got := announced
+	mu.Unlock()
+	if got != 3 {
+		t.Fatalf("announcements = %d, want 3", got)
+	}
+}
+
+// A window that only moved is not a change worth a round-trip: the
+// console shows the size, not the coordinates.
+func TestTrackerIgnoresPureMove(t *testing.T) {
+	tr := newTargetTracker(func() ([]windowctl.Window, error) { return nil, nil }, 100, targetPollInterval)
+	defer tr.stopLoop()
+
+	var (
+		mu        sync.Mutex
+		announced int
+	)
+	tr.setOnChange(func() {
+		mu.Lock()
+		announced++
+		mu.Unlock()
+	})
+
+	base := windowctl.Window{ID: "1", App: "Safari", PID: 200, Focused: true}
+	base.Bounds.W, base.Bounds.H = 800, 600
+	tr.set(base)
+
+	moved := base
+	moved.Bounds.X = 120
+	tr.set(moved)
+
+	mu.Lock()
+	got := announced
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("announcements = %d, want 1 (the move is not a change)", got)
+	}
+}
+
+// GetTarget must not announce the change it detects: the response
+// already carries the fresh target, and an announcement would make the
+// console read it again — and again, for as long as the target keeps
+// changing. Only the background ticker may wake the console.
+func TestGetTargetDoesNotAnnounce(t *testing.T) {
+	win := windowctl.Window{ID: "1", App: "Safari", PID: 200, Focused: true}
+
+	// The list stays empty until the tracker's startup poll is over, so
+	// the ticker cannot announce anything; only GetTarget's own poll
+	// writes to the tracker. The hour-long interval keeps it that way.
+	var (
+		mu       sync.Mutex
+		armed    bool
+		polled   = make(chan struct{})
+		firstOne sync.Once
+	)
+	tr := newTargetTracker(func() ([]windowctl.Window, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !armed {
+			firstOne.Do(func() { close(polled) })
+			return nil, nil
+		}
+		return []windowctl.Window{win}, nil
+	}, 100, time.Hour)
+	defer tr.stopLoop()
+	<-polled
+
+	mu.Lock()
+	armed = true
+	mu.Unlock()
+
+	announced := make(chan struct{}, 4)
+	tr.setOnChange(func() { announced <- struct{}{} })
+
+	svc := &ResizerService{tracker: tr, cfg: DefaultConfig()}
+	got, err := svc.GetTarget()
+	if err != nil || got.ID != "1" {
+		t.Fatalf("GetTarget = %+v,%v, want ID=1,nil", got, err)
+	}
+
+	select {
+	case <-announced:
+		t.Fatal("GetTarget announced a target change; the console would read it again")
+	default:
 	}
 }
 
@@ -102,12 +224,26 @@ func TestTrackerSetOverwrites(t *testing.T) {
 // focus returning to the console is precisely when a switch the ticker
 // missed would still be the answer.
 func TestGetTargetPollsOnRead(t *testing.T) {
-	var live []windowctl.Window
-	tr := newTargetTracker(func() ([]windowctl.Window, error) { return live, nil }, 100, targetPollInterval)
+	// The tracker's background goroutine calls the list func, so the
+	// test must hand snapshots across the goroutine boundary safely.
+	var (
+		liveMu sync.Mutex
+		live   []windowctl.Window
+	)
+	setLive := func(ws []windowctl.Window) {
+		liveMu.Lock()
+		live = ws
+		liveMu.Unlock()
+	}
+	tr := newTargetTracker(func() ([]windowctl.Window, error) {
+		liveMu.Lock()
+		defer liveMu.Unlock()
+		return live, nil
+	}, 100, targetPollInterval)
 	defer tr.stopLoop()
 	svc := &ResizerService{tracker: tr, cfg: DefaultConfig()}
 
-	live = []windowctl.Window{{ID: "1", App: "Safari", PID: 200, Focused: true}}
+	setLive([]windowctl.Window{{ID: "1", App: "Safari", PID: 200, Focused: true}})
 	first, err := svc.GetTarget()
 	if err != nil || first.ID != "1" {
 		t.Fatalf("first GetTarget = %+v,%v, want ID=1,nil", first, err)
@@ -115,7 +251,7 @@ func TestGetTargetPollsOnRead(t *testing.T) {
 
 	// A switch the background ticker never saw: the next read must
 	// still pick it up.
-	live = []windowctl.Window{{ID: "2", App: "Code", PID: 300, Focused: true}}
+	setLive([]windowctl.Window{{ID: "2", App: "Code", PID: 300, Focused: true}})
 	second, err := svc.GetTarget()
 	if err != nil || second.ID != "2" {
 		t.Fatalf("second GetTarget = %+v,%v, want ID=2,nil", second, err)
