@@ -1,8 +1,9 @@
 # Linux
 
-The Linux build is not just "the same app on another OS". Two areas need
-their own treatment: the global shortcut on Wayland, and the window
-events Wails' GTK3 backend does not deliver.
+The Linux build is not just "the same app on another OS". Three areas need
+their own treatment: the global shortcut on Wayland, the window events
+Wails' GTK3 backend does not deliver, and the frosted backdrop behind the
+console.
 
 ## The global shortcut on Wayland
 
@@ -61,3 +62,49 @@ The GTK3 backend connects only `focus-out-event` on the window, never
 Anything that relies on "focus returned to us" as a refresh signal has
 to be pushed from the backend instead. See
 [the target tracking notes](../architecture/target-tracking.md).
+
+## The frosted backdrop
+
+Windows gets the console's frosted panel from DWM (`BackdropType: Acrylic`)
+and macOS from `NSVisualEffectView` (`Mac.Backdrop: MacBackdropTranslucent`).
+Both are compositor features the OS applies behind a translucent window, and
+the frontend's translucent tint is painted on top of them
+(`frontend/public/style.css`).
+
+Linux has no such option in Wails: `BackgroundTypeTranslucent` only gives the
+GTK3 window an RGBA visual, which makes the window *transparent* — not
+blurred. The desktop shows through sharply.
+
+Compositors do offer blur, though: the `ext-background-effect-v1` protocol
+lets a client hand the compositor a region of its surface and ask for that
+region to be blurred. It is implemented by KWin 6.7+, Hyprland 0.56+, niri,
+Mutter 51+ and Cosmic 1.3+, so the blur is compositor-native and follows
+the desktop live, exactly like Acrylic.
+
+`blur_linux_gtk3.go` implements it:
+
+- `prepareBackgroundBlur` binds `ext_background_effect_manager_v1` at startup,
+  so the compositor's `capabilities` event has arrived by the time the
+  console is first shown.
+- `enableBackgroundBlur` attaches a background effect object to the console's
+  `wl_surface` and sets the blur region. The window must be realized first,
+  which is why it runs right after `prepClientDecorations`.
+- The blur region is one oversized rectangle: the protocol clips it to the
+  surface size, so a resize never needs a new region.
+- The region is double-buffered surface state, published on the next surface
+  commit — hence the extra `gtk_widget_queue_draw` when the capabilities
+  arrive after the window was first drawn.
+
+The protocol bindings are generated from
+`protocol/ext-background-effect-v1.xml` by `wayland-scanner` and vendored, so
+building does not require `wayland-scanner`; the regeneration commands are in
+the comment above the includes.
+
+The overlay (the window picker) deliberately stays transparent — it has to
+show the windows it is picking — so only the console gets a blur.
+
+On a compositor without the protocol nothing happens and the console keeps
+its plain translucent look.
+
+> The `wails-cross` image used for cross-compiling needs `libwayland-dev`;
+> the native build picks it up from the GTK3 development package.

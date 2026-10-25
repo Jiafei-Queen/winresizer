@@ -367,6 +367,11 @@ func (s *ResizerService) showConsole() {
 	if s.console == nil {
 		s.console = createConsoleWindow(s.app)
 		prepClientDecorations(s.console)
+		// Ask the compositor to blur behind the console. Windows and macOS
+		// get that from the OS (Acrylic / vibrancy); on Wayland it is the
+		// ext-background-effect-v1 protocol, and the window has to be
+		// realized first for its wl_surface to exist.
+		enableBackgroundBlur(s.console)
 		// Push target changes to the console instead of waiting for a
 		// focus event: Wails' GTK3 backend never forwards focus-in on
 		// Linux (only focus-out is connected), so refocusing an already

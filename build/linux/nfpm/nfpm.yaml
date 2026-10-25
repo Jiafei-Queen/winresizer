@@ -27,9 +27,12 @@ contents:
 # GTK3 + WebKit2GTK 4.1 stack: the app is built with -tags gtk3 because
 # wails v3's GTK4 backend does not implement window transparency. Keep these
 # in sync with the gtk3 build tag in the linux Taskfile.
+# libwayland-client comes in with the console's Wayland background blur
+# (ext-background-effect-v1, see blur_linux_gtk3.go).
 depends:
   - libgtk-3-0t64
   - libwebkit2gtk-4.1-0
+  - libwayland-client0
 
 # Distribution-specific overrides for different package formats
 overrides:
@@ -38,12 +41,14 @@ overrides:
     depends:
       - gtk3
       - webkit2gtk4.1
+      - wayland
 
   # Arch Linux packages
   archlinux:
     depends:
       - gtk3
       - webkit2gtk-4.1
+      - wayland
 
 # scripts section to ensure desktop database is updated after install
 scripts:

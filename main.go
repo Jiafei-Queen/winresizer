@@ -70,6 +70,14 @@ func main() {
 	setupTray(app, svc)
 	registerHotkey(app, svc, cfg.Hotkey)
 
+	// Bind the compositor's background effect manager as early as possible,
+	// so its capabilities event has arrived by the time the console is
+	// first shown and the blur comes up with the very first frame instead
+	// of a frame later. No-op where the compositor has no such protocol.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
+		prepareBackgroundBlur()
+	})
+
 	// Show the console on first run so the user discovers the app; dev
 	// builds always show it (see buildmode_dev.go / buildmode_production.go).
 	// Every later start stays quietly in the tray until opened.
